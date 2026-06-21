@@ -1,0 +1,46 @@
+[INFO] Modelo base: meta-llama/Llama-3.1-8B-Instruct
+[INFO] Arquivo de teste: /workspace/pi-defense-exp/data/processed/test_all_scenarios.jsonl
+[INFO] Exemplos avaliados: 2616
+
+Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]
+Fetching 4 files:  25%|██▌       | 1/4 [02:04<06:14, 124.78s/it]
+Fetching 4 files: 100%|██████████| 4/4 [02:04<00:00, 31.19s/it] 
+
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]
+Loading weights:   0%|          | 1/291 [00:00<02:21,  2.05it/s]
+Loading weights:   1%|          | 2/291 [00:00<01:18,  3.68it/s]
+Loading weights:   3%|▎         | 9/291 [00:00<00:14, 19.24it/s]
+Loading weights:   8%|▊         | 22/291 [00:00<00:05, 45.33it/s]
+Loading weights:  11%|█         | 31/291 [00:01<00:05, 45.50it/s]
+Loading weights:  14%|█▎        | 40/291 [00:01<00:05, 44.95it/s]
+Loading weights:  17%|█▋        | 49/291 [00:01<00:05, 44.91it/s]
+Loading weights:  20%|█▉        | 58/291 [00:01<00:05, 43.72it/s]
+Loading weights:  23%|██▎       | 67/291 [00:01<00:04, 45.08it/s]
+Loading weights:  26%|██▌       | 76/291 [00:02<00:05, 39.86it/s]
+Loading weights:  29%|██▉       | 85/291 [00:02<00:05, 41.00it/s]
+Loading weights:  33%|███▎      | 95/291 [00:02<00:03, 49.92it/s]
+Loading weights:  36%|███▌      | 104/291 [00:02<00:03, 49.50it/s]
+Loading weights:  38%|███▊      | 112/291 [00:02<00:03, 46.84it/s]
+Loading weights:  42%|████▏     | 121/291 [00:02<00:03, 51.70it/s]
+Loading weights:  45%|████▍     | 130/291 [00:03<00:03, 48.73it/s]
+Loading weights:  48%|████▊     | 139/291 [00:03<00:03, 47.47it/s]
+Loading weights:  51%|█████     | 148/291 [00:03<00:02, 50.65it/s]
+Loading weights:  54%|█████▍    | 157/291 [00:03<00:02, 47.21it/s]
+Loading weights:  57%|█████▋    | 166/291 [00:03<00:02, 54.32it/s]
+Loading weights:  60%|██████    | 175/291 [00:04<00:02, 49.58it/s]
+Loading weights:  63%|██████▎   | 184/291 [00:04<00:02, 42.72it/s]
+Loading weights:  66%|██████▋   | 193/291 [00:04<00:02, 44.44it/s]
+Loading weights:  69%|██████▉   | 202/291 [00:04<00:01, 48.44it/s]
+Loading weights:  73%|███████▎  | 211/291 [00:04<00:01, 43.08it/s]
+Loading weights:  76%|███████▌  | 220/291 [00:05<00:01, 43.52it/s]
+Loading weights:  79%|███████▊  | 229/291 [00:05<00:01, 43.18it/s]
+Loading weights:  82%|████████▏ | 239/291 [00:05<00:01, 45.99it/s]
+Loading weights:  85%|████████▍ | 247/291 [00:05<00:00, 45.61it/s]
+Loading weights:  88%|████████▊ | 256/291 [00:05<00:00, 45.01it/s]
+Loading weights:  91%|█████████ | 265/291 [00:06<00:00, 42.14it/s]
+Loading weights:  96%|█████████▌| 280/291 [00:06<00:00, 60.22it/s]
+Loading weights:  99%|█████████▉| 288/291 [00:06<00:00, 53.40it/s]
+Loading weights: 100%|██████████| 291/291 [00:06<00:00, 45.04it/s]
+[transformers] Ignoring clean_up_tokenization_spaces=True for BPE tokenizer TokenizersBackend. The clean_up_tokenization post-processing step is designed for WordPiece tokenizers and is destructive for BPE (it strips spaces before punctuation). Set clean_up_tokenization_spaces=False to suppress this warning, or set clean_up_tokenization_spaces_for_bpe_even_though_it_will_corrupt_output=True to force cleanup anyway.
+[OK] Raw salvo em: /workspace/pi-defense-exp/runs/opi_sst2_sms_5k_872/dataset_seed42/baselines/c0_c1/raw/c0_c1_raw_generations.jsonl
+[OK] Métricas salvas em: /workspace/pi-defense-exp/runs/opi_sst2_sms_5k_872/dataset_seed42/baselines/c0_c1/metrics/c0_c1_metrics.csv

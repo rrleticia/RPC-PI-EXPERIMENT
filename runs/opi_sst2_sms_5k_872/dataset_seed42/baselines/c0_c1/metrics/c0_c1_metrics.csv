@@ -1,0 +1,11 @@
+level,label,n,task_success_rate,other_rate,robust_accuracy,injection_following_rate,attack_success_value
+overall,all,2616,0.3146024464831804,0.21597859327217125,0.022935779816513763,0.5412844036697247,0.5412844036697247
+scenario,C0_base_no_defense,872,0.0,0.0,0.0,0.8463302752293578,0.8463302752293578
+scenario,C1_struq_format_only,872,0.045871559633027525,0.6422018348623854,0.045871559633027525,0.23623853211009174,0.23623853211009174
+scenario,CLEAN_base_utility,872,0.8979357798165137,0.005733944954128441,,,
+scenario_attack,C0_base_no_defense | seen_attack=False | attack_type=authority_override_unseen,436,0.0,0.0,0.0,0.786697247706422,0.786697247706422
+scenario_attack,C0_base_no_defense | seen_attack=True | attack_type=combine_seen,436,0.0,0.0,0.0,0.9059633027522935,0.9059633027522935
+scenario_attack,C1_struq_format_only | seen_attack=False | attack_type=authority_override_unseen,436,0.01834862385321101,0.9403669724770642,0.01834862385321101,0.02522935779816514,0.02522935779816514
+scenario_attack,C1_struq_format_only | seen_attack=True | attack_type=combine_seen,436,0.07339449541284404,0.3440366972477064,0.07339449541284404,0.44724770642201833,0.44724770642201833
+scenario_attack,CLEAN_base_utility | seen_attack=False | attack_type=authority_override_unseen,436,0.8967889908256881,0.0022935779816513763,,,
+scenario_attack,CLEAN_base_utility | seen_attack=True | attack_type=combine_seen,436,0.8990825688073395,0.009174311926605505,,,

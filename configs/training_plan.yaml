@@ -1,0 +1,234 @@
+created_at_utc: '2026-06-29T11:48:46.510794+00:00'
+project_root: /workspace/pi-defense-exp
+base_model:
+  base_model_id: Qwen/Qwen2.5-1.5B-Instruct
+  model_family: causal_lm
+  uses_chat_template: true
+  reason_for_choice: Modelo instrucional relativamente pequeno, mais viável para uma
+    GPU no RunPod e adequado para avaliação inicial de prompts e adaptadores.
+  same_base_model_for_all_scenarios: true
+seeds:
+  dataset_seed: 42
+  experiment_seeds:
+  - 42
+  - 123
+  - 2026
+  trained_scenario_ids: &id001
+  - c2_struq_sft
+  - c3_secalign_dpo
+  - c4_ih_sft
+  trained_scenario_labels:
+  - C2
+  - C3
+  - C4
+  replicates_per_trained_scenario: 3
+  total_adapter_runs: 9
+  notes:
+  - DATASET_SEED controls dataset construction and must stay fixed across scenarios.
+  - EXPERIMENT_SEEDS define training replicates for c2_struq_sft, c3_secalign_dpo,
+    and c4_ih_sft.
+  - C0 and C1 do not train adapters.
+  - Scenario IDs are kept aligned with 04_run_training.ipynb.
+scenarios:
+  c2_struq_sft:
+    scenario_id: c2_struq_sft
+    scenario_label: C2
+    name: StruQ-like SFT
+    method: sft
+    train_file: /workspace/pi-defense-exp/data/views/struq/train_sft.jsonl
+    validation_file: /workspace/pi-defense-exp/data/views/struq/validation_sft.jsonl
+    adapter_output_base: /workspace/pi-defense-exp/adapters/struq
+    adapter_outputs_by_seed:
+      seed_42: /workspace/pi-defense-exp/adapters/struq/seed_42
+      seed_123: /workspace/pi-defense-exp/adapters/struq/seed_123
+      seed_2026: /workspace/pi-defense-exp/adapters/struq/seed_2026
+  c3_secalign_dpo:
+    scenario_id: c3_secalign_dpo
+    scenario_label: C3
+    name: SecAlign-like DPO
+    method: dpo
+    train_file: /workspace/pi-defense-exp/data/views/secalign/train_dpo.jsonl
+    validation_file: /workspace/pi-defense-exp/data/views/secalign/validation_dpo.jsonl
+    adapter_output_base: /workspace/pi-defense-exp/adapters/secalign
+    adapter_outputs_by_seed:
+      seed_42: /workspace/pi-defense-exp/adapters/secalign/seed_42
+      seed_123: /workspace/pi-defense-exp/adapters/secalign/seed_123
+      seed_2026: /workspace/pi-defense-exp/adapters/secalign/seed_2026
+  c4_ih_sft:
+    scenario_id: c4_ih_sft
+    scenario_label: C4
+    name: Instruction-Hierarchy-like SFT
+    method: sft
+    train_file: /workspace/pi-defense-exp/data/views/ih/train_sft.jsonl
+    validation_file: /workspace/pi-defense-exp/data/views/ih/validation_sft.jsonl
+    adapter_output_base: /workspace/pi-defense-exp/adapters/ih
+    adapter_outputs_by_seed:
+      seed_42: /workspace/pi-defense-exp/adapters/ih/seed_42
+      seed_123: /workspace/pi-defense-exp/adapters/ih/seed_123
+      seed_2026: /workspace/pi-defense-exp/adapters/ih/seed_2026
+logging:
+  log_dir: /workspace/pi-defense-exp/logs/training
+  runs_log_dir: /workspace/pi-defense-exp/logs/training/runs
+  global_events_log: /workspace/pi-defense-exp/logs/training/04_run_training_events.jsonl
+  global_summary_log: /workspace/pi-defense-exp/logs/training/04_run_training_summary.json
+  scenario_id_policy:
+    uses_canonical_scenario_ids: true
+    canonical_scenario_ids: *id001
+    matches_04_run_training: true
+  event_types:
+  - run_started
+  - run_completed
+  - run_failed
+  per_run_files:
+    metadata: run_metadata.json
+    error: error.txt
+  logging_policy:
+    incremental_events: true
+    one_log_directory_per_scenario_seed: true
+    record_traceback_on_failure: true
+    write_summary_after_all_runs: true
+  runs:
+    c2_struq_sft_seed_42:
+      scenario_id: c2_struq_sft
+      scenario_label: C2
+      name: StruQ-like SFT
+      method: sft
+      seed: 42
+      run_log_dir: /workspace/pi-defense-exp/logs/training/runs/c2_struq_sft/seed_42
+      run_metadata: /workspace/pi-defense-exp/logs/training/runs/c2_struq_sft/seed_42/run_metadata.json
+      error_file: /workspace/pi-defense-exp/logs/training/runs/c2_struq_sft/seed_42/error.txt
+    c2_struq_sft_seed_123:
+      scenario_id: c2_struq_sft
+      scenario_label: C2
+      name: StruQ-like SFT
+      method: sft
+      seed: 123
+      run_log_dir: /workspace/pi-defense-exp/logs/training/runs/c2_struq_sft/seed_123
+      run_metadata: /workspace/pi-defense-exp/logs/training/runs/c2_struq_sft/seed_123/run_metadata.json
+      error_file: /workspace/pi-defense-exp/logs/training/runs/c2_struq_sft/seed_123/error.txt
+    c2_struq_sft_seed_2026:
+      scenario_id: c2_struq_sft
+      scenario_label: C2
+      name: StruQ-like SFT
+      method: sft
+      seed: 2026
+      run_log_dir: /workspace/pi-defense-exp/logs/training/runs/c2_struq_sft/seed_2026
+      run_metadata: /workspace/pi-defense-exp/logs/training/runs/c2_struq_sft/seed_2026/run_metadata.json
+      error_file: /workspace/pi-defense-exp/logs/training/runs/c2_struq_sft/seed_2026/error.txt
+    c3_secalign_dpo_seed_42:
+      scenario_id: c3_secalign_dpo
+      scenario_label: C3
+      name: SecAlign-like DPO
+      method: dpo
+      seed: 42
+      run_log_dir: /workspace/pi-defense-exp/logs/training/runs/c3_secalign_dpo/seed_42
+      run_metadata: /workspace/pi-defense-exp/logs/training/runs/c3_secalign_dpo/seed_42/run_metadata.json
+      error_file: /workspace/pi-defense-exp/logs/training/runs/c3_secalign_dpo/seed_42/error.txt
+    c3_secalign_dpo_seed_123:
+      scenario_id: c3_secalign_dpo
+      scenario_label: C3
+      name: SecAlign-like DPO
+      method: dpo
+      seed: 123
+      run_log_dir: /workspace/pi-defense-exp/logs/training/runs/c3_secalign_dpo/seed_123
+      run_metadata: /workspace/pi-defense-exp/logs/training/runs/c3_secalign_dpo/seed_123/run_metadata.json
+      error_file: /workspace/pi-defense-exp/logs/training/runs/c3_secalign_dpo/seed_123/error.txt
+    c3_secalign_dpo_seed_2026:
+      scenario_id: c3_secalign_dpo
+      scenario_label: C3
+      name: SecAlign-like DPO
+      method: dpo
+      seed: 2026
+      run_log_dir: /workspace/pi-defense-exp/logs/training/runs/c3_secalign_dpo/seed_2026
+      run_metadata: /workspace/pi-defense-exp/logs/training/runs/c3_secalign_dpo/seed_2026/run_metadata.json
+      error_file: /workspace/pi-defense-exp/logs/training/runs/c3_secalign_dpo/seed_2026/error.txt
+    c4_ih_sft_seed_42:
+      scenario_id: c4_ih_sft
+      scenario_label: C4
+      name: Instruction-Hierarchy-like SFT
+      method: sft
+      seed: 42
+      run_log_dir: /workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_42
+      run_metadata: /workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_42/run_metadata.json
+      error_file: /workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_42/error.txt
+    c4_ih_sft_seed_123:
+      scenario_id: c4_ih_sft
+      scenario_label: C4
+      name: Instruction-Hierarchy-like SFT
+      method: sft
+      seed: 123
+      run_log_dir: /workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_123
+      run_metadata: /workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_123/run_metadata.json
+      error_file: /workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_123/error.txt
+    c4_ih_sft_seed_2026:
+      scenario_id: c4_ih_sft
+      scenario_label: C4
+      name: Instruction-Hierarchy-like SFT
+      method: sft
+      seed: 2026
+      run_log_dir: /workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_2026
+      run_metadata: /workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_2026/run_metadata.json
+      error_file: /workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_2026/error.txt
+lora_config:
+  load_in_4bit: true
+  bnb_4bit_quant_type: nf4
+  bnb_4bit_compute_dtype: bfloat16
+  bnb_4bit_use_double_quant: true
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  bias: none
+  task_type: CAUSAL_LM
+  target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+sft_training_config:
+  num_train_epochs: 1
+  learning_rate: 0.0002
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  max_seq_length: 1024
+  logging_steps: 10
+  save_strategy: epoch
+  eval_strategy: epoch
+  warmup_ratio: 0.03
+  lr_scheduler_type: cosine
+  fp16: false
+  bf16: true
+dpo_training_config:
+  num_train_epochs: 1
+  learning_rate: 5.0e-05
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  max_prompt_length: 1024
+  max_length: 1280
+  beta: 0.1
+  logging_steps: 10
+  save_strategy: epoch
+  eval_strategy: epoch
+  warmup_ratio: 0.03
+  lr_scheduler_type: cosine
+  fp16: false
+  bf16: true
+evaluation_files:
+  test_clean: /workspace/pi-defense-exp/data/views/evaluation/test_clean.jsonl
+  test_attacked_seen: /workspace/pi-defense-exp/data/views/evaluation/test_attacked_seen.jsonl
+  test_attacked_unseen: /workspace/pi-defense-exp/data/views/evaluation/test_attacked_unseen.jsonl
+notes:
+- C0 and C1 do not require training.
+- C2 and C4 use SFT with clean + attacked_seen examples.
+- C3 uses DPO with attacked_seen examples only.
+- All scenarios must use the same base model.
+- All scenarios must be evaluated on the same test files.
+- c2_struq_sft, c3_secalign_dpo, and c4_ih_sft must each be trained once for each
+  seed in EXPERIMENT_SEEDS.
+- Each trained adapter must be saved under adapters/<defense_family>/seed_<seed>/.
+- Training runs must write incremental logs under logs/training/ and logs/training/runs/<scenario_id>/seed_<seed>/.
+- The scenario_id values are aligned with 04_run_training.ipynb.

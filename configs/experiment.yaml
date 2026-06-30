@@ -1,0 +1,35 @@
+seed: 42
+project_name: pi-defense-eval
+
+splits:
+  train_per_task: 300
+  validation_per_task: 50
+  test_per_task: 268
+
+tasks:
+  - mrpc
+  - rte
+  - cola
+  - qqp
+  - sst2
+  - sms_spam
+  - hsol
+
+seen_attacks:
+  - naive
+  - ignore
+  - escape
+  - fake_comp
+  - combine
+
+unseen_attacks:
+  - combine_adaptive
+  - gcg
+  - gcg_adaptive
+
+scenarios:
+  - c0_base
+  - c1_struq_format_only
+  - c2_struq_sft
+  - c3_secalign_dpo
+  - c4_ih_sft

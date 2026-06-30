@@ -1,0 +1,362 @@
+{
+  "notebook": "05_run_inference",
+  "created_at_utc": "2026-06-29T23:30:18.916455+00:00",
+  "project_root": "/workspace/pi-defense-exp",
+  "run_mode": "full",
+  "base_model_id": "meta-llama/Llama-3.1-8B-Instruct",
+  "dataset_seed": 42,
+  "experiment_seeds": [
+    42,
+    123,
+    2026
+  ],
+  "scenarios": {
+    "c0_base": {
+      "label": "C0 — Base model",
+      "uses_adapter": false,
+      "prompt_strategy": "plain",
+      "seeds": [
+        42
+      ],
+      "adapter_root": null
+    },
+    "c1_struq_format_only": {
+      "label": "C1 — StruQ format-only",
+      "uses_adapter": false,
+      "prompt_strategy": "struq",
+      "seeds": [
+        42
+      ],
+      "adapter_root": null
+    },
+    "c2_struq_sft": {
+      "label": "C2 — StruQ-like SFT",
+      "uses_adapter": true,
+      "prompt_strategy": "struq",
+      "seeds": [
+        42,
+        123,
+        2026
+      ],
+      "adapter_root": "/workspace/pi-defense-exp/adapters/struq"
+    },
+    "c3_secalign_dpo": {
+      "label": "C3 — SecAlign-like DPO",
+      "uses_adapter": true,
+      "prompt_strategy": "secalign",
+      "seeds": [
+        42,
+        123,
+        2026
+      ],
+      "adapter_root": "/workspace/pi-defense-exp/adapters/secalign"
+    },
+    "c4_ih_sft": {
+      "label": "C4 — Instruction-Hierarchy-like SFT",
+      "uses_adapter": true,
+      "prompt_strategy": "instruction_hierarchy",
+      "seeds": [
+        42,
+        123,
+        2026
+      ],
+      "adapter_root": "/workspace/pi-defense-exp/adapters/ih"
+    }
+  },
+  "evaluation_files": {
+    "test_clean": "/workspace/pi-defense-exp/data/views/evaluation/test_clean.jsonl",
+    "test_attacked_seen": "/workspace/pi-defense-exp/data/views/evaluation/test_attacked_seen.jsonl",
+    "test_attacked_unseen": "/workspace/pi-defense-exp/data/views/evaluation/test_attacked_unseen.jsonl"
+  },
+  "expected_evaluation_counts": {
+    "test_clean": 1876,
+    "test_attacked_seen": 9380,
+    "test_attacked_unseen": 5628
+  },
+  "generation_config": {
+    "max_new_tokens": 8,
+    "do_sample": false,
+    "num_beams": 1
+  },
+  "max_input_length": 1536,
+  "generation_batch_size": 4,
+  "save_prompt_text": false,
+  "results_dir": "/workspace/pi-defense-exp/results/inference/full",
+  "events_log_path": "/workspace/pi-defense-exp/logs/inference/05_run_inference_events.jsonl",
+  "summary_log_json_path": "/workspace/pi-defense-exp/logs/inference/05_run_inference_summary.json",
+  "runs_log_dir": "/workspace/pi-defense-exp/logs/inference/runs",
+  "result_files": [
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c0_base/seed_42/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c0_base/seed_42/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c0_base/seed_42/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c1_struq_format_only/seed_42/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c1_struq_format_only/seed_42/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c1_struq_format_only/seed_42/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 42,
+      "split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_42/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 42,
+      "split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_42/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 42,
+      "split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_42/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 123,
+      "split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_123/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 123,
+      "split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_123/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 123,
+      "split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_123/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 2026,
+      "split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_2026/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 2026,
+      "split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_2026/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 2026,
+      "split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_2026/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 42,
+      "split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_42/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 42,
+      "split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_42/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 42,
+      "split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_42/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 123,
+      "split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_123/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 123,
+      "split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_123/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 123,
+      "split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_123/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 2026,
+      "split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_2026/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 2026,
+      "split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_2026/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 2026,
+      "split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_2026/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 42,
+      "split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_42/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 42,
+      "split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_42/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 42,
+      "split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_42/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 123,
+      "split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_123/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 123,
+      "split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_123/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 123,
+      "split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_123/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 2026,
+      "split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_2026/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 2026,
+      "split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_2026/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 2026,
+      "split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_2026/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    }
+  ],
+  "notes": [
+    "This notebook generates model outputs but does not compute final aggregate metrics.",
+    "C0 and C1 use the base model without trained adapters.",
+    "C2, C3, and C4 use seed-specific adapters trained in notebook 04.",
+    "Inference outputs include raw model output and normalized output.",
+    "The next notebook should compute metrics from the JSONL files produced here.",
+    "Prompt text is not saved by default to reduce file size and avoid unnecessary exposure of sensitive dataset content."
+  ]
+}

@@ -1,0 +1,172 @@
+{
+  "notebook": "02_dataset_creation",
+  "created_at_utc": "2026-06-29T11:34:57.189809+00:00",
+  "project_root": "/workspace/pi-defense-exp",
+  "seed": 42,
+  "tasks": [
+    "mrpc",
+    "rte",
+    "cola",
+    "qqp",
+    "sst2",
+    "sms_spam",
+    "hsol"
+  ],
+  "split_sizes": {
+    "train": 300,
+    "validation": 50,
+    "test": 268
+  },
+  "attacks": {
+    "seen": [
+      "naive",
+      "ignore",
+      "escape",
+      "fake_comp",
+      "combine"
+    ],
+    "unseen_or_adaptive": [
+      "combine_adaptive",
+      "gcg",
+      "gcg_adaptive"
+    ],
+    "all": [
+      "naive",
+      "ignore",
+      "escape",
+      "fake_comp",
+      "combine",
+      "combine_adaptive",
+      "gcg",
+      "gcg_adaptive"
+    ]
+  },
+  "expected_line_counts": {
+    "train_clean": 2100,
+    "validation_clean": 350,
+    "test_clean": 1876,
+    "train_attacked_seen": 2100,
+    "validation_attacked_seen": 350,
+    "test_attacked_seen": 9380,
+    "test_attacked_unseen": 5628,
+    "struq_train_sft": 4200,
+    "struq_validation_sft": 700,
+    "secalign_train_dpo": 2100,
+    "secalign_validation_dpo": 350,
+    "ih_train_sft": 4200,
+    "ih_validation_sft": 700,
+    "evaluation_test_clean": 1876,
+    "evaluation_test_attacked_seen": 9380,
+    "evaluation_test_attacked_unseen": 5628
+  },
+  "files": {
+    "train_clean": {
+      "path": "data/canonical/train_clean.jsonl",
+      "exists": true,
+      "line_count": 2100
+    },
+    "validation_clean": {
+      "path": "data/canonical/validation_clean.jsonl",
+      "exists": true,
+      "line_count": 350
+    },
+    "test_clean": {
+      "path": "data/canonical/test_clean.jsonl",
+      "exists": true,
+      "line_count": 1876
+    },
+    "train_attacked_seen": {
+      "path": "data/canonical/train_attacked_seen.jsonl",
+      "exists": true,
+      "line_count": 2100
+    },
+    "validation_attacked_seen": {
+      "path": "data/canonical/validation_attacked_seen.jsonl",
+      "exists": true,
+      "line_count": 350
+    },
+    "test_attacked_seen": {
+      "path": "data/canonical/test_attacked_seen.jsonl",
+      "exists": true,
+      "line_count": 9380
+    },
+    "test_attacked_unseen": {
+      "path": "data/canonical/test_attacked_unseen.jsonl",
+      "exists": true,
+      "line_count": 5628
+    },
+    "struq_train_sft": {
+      "path": "data/views/struq/train_sft.jsonl",
+      "exists": true,
+      "line_count": 4200
+    },
+    "struq_validation_sft": {
+      "path": "data/views/struq/validation_sft.jsonl",
+      "exists": true,
+      "line_count": 700
+    },
+    "secalign_train_dpo": {
+      "path": "data/views/secalign/train_dpo.jsonl",
+      "exists": true,
+      "line_count": 2100
+    },
+    "secalign_validation_dpo": {
+      "path": "data/views/secalign/validation_dpo.jsonl",
+      "exists": true,
+      "line_count": 350
+    },
+    "ih_train_sft": {
+      "path": "data/views/ih/train_sft.jsonl",
+      "exists": true,
+      "line_count": 4200
+    },
+    "ih_validation_sft": {
+      "path": "data/views/ih/validation_sft.jsonl",
+      "exists": true,
+      "line_count": 700
+    },
+    "evaluation_test_clean": {
+      "path": "data/views/evaluation/test_clean.jsonl",
+      "exists": true,
+      "line_count": 1876
+    },
+    "evaluation_test_attacked_seen": {
+      "path": "data/views/evaluation/test_attacked_seen.jsonl",
+      "exists": true,
+      "line_count": 9380
+    },
+    "evaluation_test_attacked_unseen": {
+      "path": "data/views/evaluation/test_attacked_unseen.jsonl",
+      "exists": true,
+      "line_count": 5628
+    }
+  },
+  "views": {
+    "struq_like_sft": {
+      "uses": "clean + attacked_seen",
+      "train_file": "data/views/struq/train_sft.jsonl",
+      "validation_file": "data/views/struq/validation_sft.jsonl"
+    },
+    "secalign_like_dpo": {
+      "uses": "attacked_seen only",
+      "train_file": "data/views/secalign/train_dpo.jsonl",
+      "validation_file": "data/views/secalign/validation_dpo.jsonl"
+    },
+    "instruction_hierarchy_like_sft": {
+      "uses": "clean + attacked_seen",
+      "train_file": "data/views/ih/train_sft.jsonl",
+      "validation_file": "data/views/ih/validation_sft.jsonl"
+    }
+  },
+  "evaluation": {
+    "clean": "data/views/evaluation/test_clean.jsonl",
+    "attacked_seen": "data/views/evaluation/test_attacked_seen.jsonl",
+    "attacked_unseen": "data/views/evaluation/test_attacked_unseen.jsonl"
+  },
+  "notes": [
+    "GLUE tasks use train + validation because official test labels are not publicly available for all selected subtasks.",
+    "SMS Spam and HSOL use internal stratified splits.",
+    "GCG and GCG-adaptive are represented as GCG-like templates in this initial version, not optimized adversarial suffixes.",
+    "HSOL may contain offensive language; manual inspection should prefer metadata-only views or less sensitive tasks."
+  ]
+}

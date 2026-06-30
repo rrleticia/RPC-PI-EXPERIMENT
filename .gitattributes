@@ -7,3 +7,4 @@ results/error_analysis/full/tables/paired_vs_c0_rows.csv filter=lfs diff=lfs mer
 results/metrics/full/per_example_metrics.csv filter=lfs diff=lfs merge=lfs -text
 *.jinja filter=lfs diff=lfs merge=lfs -text
 *.safetensors filter=lfs diff=lfs merge=lfs -text
+*.pt filter=lfs diff=lfs merge=lfs -text

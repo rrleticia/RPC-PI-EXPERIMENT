@@ -1,0 +1,12 @@
+ipykernel
+jupyter
+notebook
+jupyterlab
+pandas
+numpy
+scikit-learn
+datasets
+huggingface_hub
+pyarrow
+tqdm
+matplotlib

@@ -1,0 +1,212 @@
+{
+  "created_at_utc": "2026-06-30T14:51:27.004363+00:00",
+  "run_mode": "full",
+  "total_inference_rows": 195104,
+  "coverage_rows": 33,
+  "failure_taxonomy_rows": 99,
+  "paired_vs_c0_rows": 168840,
+  "invalid_output_rows": 274,
+  "sample_categories": [
+    {
+      "category": "robust_wins_vs_c0",
+      "rows": 600,
+      "full_path": "/workspace/pi-defense-exp/results/error_analysis/full/samples/robust_wins_vs_c0.jsonl",
+      "safe_path": "/workspace/pi-defense-exp/results/error_analysis/full/safe_samples/robust_wins_vs_c0_safe.jsonl"
+    },
+    {
+      "category": "attack_following_reductions_vs_c0",
+      "rows": 600,
+      "full_path": "/workspace/pi-defense-exp/results/error_analysis/full/samples/attack_following_reductions_vs_c0.jsonl",
+      "safe_path": "/workspace/pi-defense-exp/results/error_analysis/full/safe_samples/attack_following_reductions_vs_c0_safe.jsonl"
+    },
+    {
+      "category": "clean_regressions_vs_c0",
+      "rows": 300,
+      "full_path": "/workspace/pi-defense-exp/results/error_analysis/full/samples/clean_regressions_vs_c0.jsonl",
+      "safe_path": "/workspace/pi-defense-exp/results/error_analysis/full/safe_samples/clean_regressions_vs_c0_safe.jsonl"
+    },
+    {
+      "category": "clean_improvements_vs_c0",
+      "rows": 300,
+      "full_path": "/workspace/pi-defense-exp/results/error_analysis/full/samples/clean_improvements_vs_c0.jsonl",
+      "safe_path": "/workspace/pi-defense-exp/results/error_analysis/full/safe_samples/clean_improvements_vs_c0_safe.jsonl"
+    }
+  ],
+  "top_attack_following": [
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "attack_type": "combine",
+      "total": 1876,
+      "attack_following_rate": 0.9786780383795309
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "attack_type": "combine",
+      "total": 3752,
+      "attack_following_rate": 0.9312366737739872
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "attack_type": "naive",
+      "total": 3752,
+      "attack_following_rate": 0.8987206823027718
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "attack_type": "escape",
+      "total": 3752,
+      "attack_following_rate": 0.8848614072494669
+    },
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "attack_type": "escape",
+      "total": 1876,
+      "attack_following_rate": 0.8662046908315565
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_attacked_unseen",
+      "attack_type": "gcg_adaptive",
+      "total": 1876,
+      "attack_following_rate": 0.8592750533049041
+    },
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "attack_type": "ignore",
+      "total": 1876,
+      "attack_following_rate": 0.855543710021322
+    },
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "eval_split": "test_attacked_unseen",
+      "attack_type": "gcg_adaptive",
+      "total": 1876,
+      "attack_following_rate": 0.8528784648187633
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "attack_type": "fake_comp",
+      "total": 3752,
+      "attack_following_rate": 0.8342217484008528
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "attack_type": "ignore",
+      "total": 3752,
+      "attack_following_rate": 0.8128997867803838
+    }
+  ],
+  "top_task_errors": [
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "task_name": "qqp",
+      "total": 2680,
+      "error_rate": 0.9955223880597015
+    },
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "task_name": "qqp",
+      "total": 1340,
+      "error_rate": 0.9768656716417911
+    },
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "task_name": "cola",
+      "total": 1340,
+      "error_rate": 0.9746268656716418
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "task_name": "sms_spam",
+      "total": 2680,
+      "error_rate": 0.9708955223880597
+    },
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "task_name": "sms_spam",
+      "total": 1340,
+      "error_rate": 0.9388059701492537
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "task_name": "cola",
+      "total": 2680,
+      "error_rate": 0.908955223880597
+    },
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "eval_split": "test_attacked_unseen",
+      "task_name": "qqp",
+      "total": 804,
+      "error_rate": 0.8980099502487562
+    },
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "task_name": "rte",
+      "total": 1340,
+      "error_rate": 0.8850746268656716
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "task_name": "mrpc",
+      "total": 2680,
+      "error_rate": 0.8820895522388059
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "task_name": "hsol",
+      "total": 2680,
+      "error_rate": 0.8664179104477612
+    }
+  ],
+  "outputs": {
+    "coverage": "/workspace/pi-defense-exp/results/error_analysis/full/tables/inference_coverage.csv",
+    "failure_taxonomy": "/workspace/pi-defense-exp/results/error_analysis/full/tables/failure_taxonomy_by_scenario_seed_split.csv",
+    "task_errors": "/workspace/pi-defense-exp/results/error_analysis/full/tables/error_rates_by_task.csv",
+    "attack_errors": "/workspace/pi-defense-exp/results/error_analysis/full/tables/error_rates_by_attack_type.csv",
+    "paired_summary_vs_c0": "/workspace/pi-defense-exp/results/error_analysis/full/tables/paired_summary_vs_c0.csv",
+    "samples_summary": "/workspace/pi-defense-exp/results/error_analysis/full/tables/samples_summary.csv",
+    "invalid_outputs_summary": "/workspace/pi-defense-exp/results/error_analysis/full/tables/invalid_outputs_summary.csv",
+    "seen_vs_unseen": "/workspace/pi-defense-exp/results/error_analysis/full/tables/seen_vs_unseen_error_patterns.csv",
+    "discussion_top_attack_following": "/workspace/pi-defense-exp/results/error_analysis/full/tables/discussion_top_attack_following.csv",
+    "discussion_top_task_errors": "/workspace/pi-defense-exp/results/error_analysis/full/tables/discussion_top_task_errors.csv",
+    "discussion_paired_vs_c0": "/workspace/pi-defense-exp/results/error_analysis/full/tables/discussion_paired_vs_c0.csv"
+  }
+}

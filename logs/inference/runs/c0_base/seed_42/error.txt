@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/tmp/ipykernel_14328/2391120856.py", line 36, in <module>
+    model = load_model_for_inference(adapter_path=adapter_path)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/ipykernel_14328/3663304092.py", line 23, in load_model_for_inference
+    dtype=_dtype,
+          ^^^^^^
+NameError: name '_dtype' is not defined. Did you mean: 'dtype'?

@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/tmp/ipykernel_2767/3120636993.py", line 46, in train_dpo_scenario
+    args = DPOConfig(
+           ^^^^^^^^^^
+TypeError: DPOConfig.__init__() got an unexpected keyword argument 'max_prompt_length'

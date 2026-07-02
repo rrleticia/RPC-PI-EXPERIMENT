@@ -1,0 +1,604 @@
+{
+  "notebook": "10_export_results",
+  "created_at_utc": "2026-06-30T15:02:22.337098+00:00",
+  "project_root": "/workspace/pi-defense-exp",
+  "run_mode": "full",
+  "export_dir": "/workspace/pi-defense-exp/exports/final_results/full",
+  "zip_archive": "/workspace/pi-defense-exp/exports/final_results/full/archive/pi_defense_experiment_export_full.zip",
+  "inputs": {
+    "metrics_results_dir": "/workspace/pi-defense-exp/results/metrics/full",
+    "pairwise_results_dir": "/workspace/pi-defense-exp/results/pairwise_metrics/full",
+    "statistical_results_dir": "/workspace/pi-defense-exp/results/statistical_analysis/full",
+    "error_analysis_dir": "/workspace/pi-defense-exp/results/error_analysis/full"
+  },
+  "manifests_loaded": [
+    {
+      "name": "05_inference",
+      "path": "/workspace/pi-defense-exp/manifests/inference/05_run_inference_manifest.json",
+      "exists": true,
+      "status": "found"
+    },
+    {
+      "name": "06_metrics",
+      "path": "/workspace/pi-defense-exp/manifests/metrics/06_compute_metrics_manifest.json",
+      "exists": true,
+      "status": "found"
+    },
+    {
+      "name": "07_pairwise",
+      "path": "/workspace/pi-defense-exp/manifests/pairwise_metrics/07_pairwise_and_injected_metrics_manifest.json",
+      "exists": true,
+      "status": "found"
+    },
+    {
+      "name": "08_statistical_analysis",
+      "path": "/workspace/pi-defense-exp/manifests/statistical_analysis/08_statistical_analysis_manifest.json",
+      "exists": true,
+      "status": "found"
+    },
+    {
+      "name": "09_error_analysis",
+      "path": "/workspace/pi-defense-exp/manifests/error_analysis/09_error_analysis_manifest.json",
+      "exists": true,
+      "status": "found"
+    }
+  ],
+  "artifact_registry": [
+    {
+      "name": "compact_scenario_metrics",
+      "source_path": "/workspace/pi-defense-exp/results/metrics/full/compact_scenario_metrics.csv",
+      "category": "metrics_06",
+      "required": true,
+      "exists": true,
+      "description": "Tabela compacta de métricas por cenário.",
+      "export_subdir": "metrics_06",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/metrics_06/compact_scenario_metrics.csv",
+      "line_count": 6,
+      "size_bytes": 2894
+    },
+    {
+      "name": "compact_run_metrics",
+      "source_path": "/workspace/pi-defense-exp/results/metrics/full/compact_run_metrics.csv",
+      "category": "metrics_06",
+      "required": true,
+      "exists": true,
+      "description": "Tabela compacta de métricas por cenário e seed.",
+      "export_subdir": "metrics_06",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/metrics_06/compact_run_metrics.csv",
+      "line_count": 12,
+      "size_bytes": 5271
+    },
+    {
+      "name": "scenario_level_metrics",
+      "source_path": "/workspace/pi-defense-exp/results/metrics/full/scenario_level_metrics.csv",
+      "category": "metrics_06",
+      "required": true,
+      "exists": true,
+      "description": "Métricas agregadas por cenário.",
+      "export_subdir": "metrics_06",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/metrics_06/scenario_level_metrics.csv",
+      "line_count": 6,
+      "size_bytes": 18350
+    },
+    {
+      "name": "run_level_metrics",
+      "source_path": "/workspace/pi-defense-exp/results/metrics/full/run_level_metrics.csv",
+      "category": "metrics_06",
+      "required": true,
+      "exists": true,
+      "description": "Métricas agregadas por cenário e seed.",
+      "export_subdir": "metrics_06",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/metrics_06/run_level_metrics.csv",
+      "line_count": 12,
+      "size_bytes": 8781
+    },
+    {
+      "name": "task_level_metrics",
+      "source_path": "/workspace/pi-defense-exp/results/metrics/full/task_level_metrics.csv",
+      "category": "metrics_06",
+      "required": false,
+      "exists": true,
+      "description": "Métricas por task.",
+      "export_subdir": "metrics_06",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/metrics_06/task_level_metrics.csv",
+      "line_count": 232,
+      "size_bytes": 47891
+    },
+    {
+      "name": "attack_type_level_metrics",
+      "source_path": "/workspace/pi-defense-exp/results/metrics/full/attack_type_level_metrics.csv",
+      "category": "metrics_06",
+      "required": false,
+      "exists": true,
+      "description": "Métricas por tipo de ataque.",
+      "export_subdir": "metrics_06",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/metrics_06/attack_type_level_metrics.csv",
+      "line_count": 89,
+      "size_bytes": 23582
+    },
+    {
+      "name": "compact_07_metrics",
+      "source_path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/compact_07_metrics.csv",
+      "category": "pairwise_07",
+      "required": false,
+      "exists": true,
+      "description": "Tabela compacta com PNA-I, MR e Win Rate quando disponíveis.",
+      "export_subdir": "pairwise_07",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/pairwise_07/compact_07_metrics.csv",
+      "line_count": 12,
+      "size_bytes": 2178
+    },
+    {
+      "name": "pna_i_run_metrics",
+      "source_path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/pna_i_run_metrics.csv",
+      "category": "pairwise_07",
+      "required": false,
+      "exists": true,
+      "description": "PNA-I agregado por cenário e seed.",
+      "export_subdir": "pairwise_07",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/pairwise_07/pna_i_run_metrics.csv",
+      "line_count": 23,
+      "size_bytes": 2213
+    },
+    {
+      "name": "mr_run_metrics",
+      "source_path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/mr_run_metrics.csv",
+      "category": "pairwise_07",
+      "required": false,
+      "exists": true,
+      "description": "MR agregado por cenário e seed.",
+      "export_subdir": "pairwise_07",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/pairwise_07/mr_run_metrics.csv",
+      "line_count": 23,
+      "size_bytes": 3308
+    },
+    {
+      "name": "win_rate_metrics",
+      "source_path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/win_rate_metrics.csv",
+      "category": "pairwise_07",
+      "required": false,
+      "exists": true,
+      "description": "Win Rate e Adjusted Win Rate por comparação.",
+      "export_subdir": "pairwise_07",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/pairwise_07/win_rate_metrics.csv",
+      "line_count": 11,
+      "size_bytes": 1868
+    },
+    {
+      "name": "discussion_table",
+      "source_path": "/workspace/pi-defense-exp/results/statistical_analysis/full/discussion_table.csv",
+      "category": "statistical_08",
+      "required": true,
+      "exists": true,
+      "description": "Tabela principal para discussão dos resultados.",
+      "export_subdir": "statistical_08",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/statistical_08/discussion_table.csv",
+      "line_count": 6,
+      "size_bytes": 1325
+    },
+    {
+      "name": "scenario_compact_summary",
+      "source_path": "/workspace/pi-defense-exp/results/statistical_analysis/full/scenario_compact_summary.csv",
+      "category": "statistical_08",
+      "required": true,
+      "exists": true,
+      "description": "Resumo compacto por cenário com médias, desvios e IC aproximados.",
+      "export_subdir": "statistical_08",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/statistical_08/scenario_compact_summary.csv",
+      "line_count": 6,
+      "size_bytes": 6566
+    },
+    {
+      "name": "scenario_metric_summary",
+      "source_path": "/workspace/pi-defense-exp/results/statistical_analysis/full/scenario_metric_summary.csv",
+      "category": "statistical_08",
+      "required": true,
+      "exists": true,
+      "description": "Resumo estatístico longo por métrica e cenário.",
+      "export_subdir": "statistical_08",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/statistical_08/scenario_metric_summary.csv",
+      "line_count": 86,
+      "size_bytes": 14328
+    },
+    {
+      "name": "deltas_vs_reference",
+      "source_path": "/workspace/pi-defense-exp/results/statistical_analysis/full/deltas_vs_reference.csv",
+      "category": "statistical_08",
+      "required": false,
+      "exists": true,
+      "description": "Deltas contra C0 e C1.",
+      "export_subdir": "statistical_08",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/statistical_08/deltas_vs_reference.csv",
+      "line_count": 137,
+      "size_bytes": 23890
+    },
+    {
+      "name": "metric_rankings",
+      "source_path": "/workspace/pi-defense-exp/results/statistical_analysis/full/metric_rankings.csv",
+      "category": "statistical_08",
+      "required": false,
+      "exists": true,
+      "description": "Rankings exploratórios por métrica.",
+      "export_subdir": "statistical_08",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/statistical_08/metric_rankings.csv",
+      "line_count": 75,
+      "size_bytes": 7509
+    },
+    {
+      "name": "tradeoff_score",
+      "source_path": "/workspace/pi-defense-exp/results/statistical_analysis/full/tradeoff_score.csv",
+      "category": "statistical_08",
+      "required": false,
+      "exists": true,
+      "description": "Score exploratório de trade-off.",
+      "export_subdir": "statistical_08",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/statistical_08/tradeoff_score.csv",
+      "line_count": 6,
+      "size_bytes": 390
+    },
+    {
+      "name": "seed_stability",
+      "source_path": "/workspace/pi-defense-exp/results/statistical_analysis/full/seed_stability.csv",
+      "category": "statistical_08",
+      "required": false,
+      "exists": true,
+      "description": "Análise de estabilidade entre seeds.",
+      "export_subdir": "statistical_08",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/statistical_08/seed_stability.csv",
+      "line_count": 86,
+      "size_bytes": 10330
+    },
+    {
+      "name": "inference_coverage",
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/tables/inference_coverage.csv",
+      "category": "error_analysis_09",
+      "required": true,
+      "exists": true,
+      "description": "Cobertura dos outputs de inferência usados na análise qualitativa.",
+      "export_subdir": "error_analysis_09",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/error_analysis_09/inference_coverage.csv",
+      "line_count": 34,
+      "size_bytes": 1324
+    },
+    {
+      "name": "failure_taxonomy_by_scenario_seed_split",
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/tables/failure_taxonomy_by_scenario_seed_split.csv",
+      "category": "error_analysis_09",
+      "required": true,
+      "exists": true,
+      "description": "Taxonomia de falhas por cenário, seed e split.",
+      "export_subdir": "error_analysis_09",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/error_analysis_09/failure_taxonomy_by_scenario_seed_split.csv",
+      "line_count": 100,
+      "size_bytes": 7585
+    },
+    {
+      "name": "error_rates_by_task",
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/tables/error_rates_by_task.csv",
+      "category": "error_analysis_09",
+      "required": true,
+      "exists": true,
+      "description": "Taxas de erro por task.",
+      "export_subdir": "error_analysis_09",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/error_analysis_09/error_rates_by_task.csv",
+      "line_count": 232,
+      "size_bytes": 21445
+    },
+    {
+      "name": "error_rates_by_attack_type",
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/tables/error_rates_by_attack_type.csv",
+      "category": "error_analysis_09",
+      "required": false,
+      "exists": true,
+      "description": "Taxas de erro por tipo de ataque.",
+      "export_subdir": "error_analysis_09",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/error_analysis_09/error_rates_by_attack_type.csv",
+      "line_count": 89,
+      "size_bytes": 10322
+    },
+    {
+      "name": "paired_summary_vs_c0",
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/tables/paired_summary_vs_c0.csv",
+      "category": "error_analysis_09",
+      "required": false,
+      "exists": true,
+      "description": "Resumo pareado comparando cenários defendidos contra C0.",
+      "export_subdir": "error_analysis_09",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/error_analysis_09/paired_summary_vs_c0.csv",
+      "line_count": 31,
+      "size_bytes": 3248
+    },
+    {
+      "name": "invalid_outputs_summary",
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/tables/invalid_outputs_summary.csv",
+      "category": "error_analysis_09",
+      "required": false,
+      "exists": true,
+      "description": "Resumo de saídas inválidas.",
+      "export_subdir": "error_analysis_09",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/error_analysis_09/invalid_outputs_summary.csv",
+      "line_count": 49,
+      "size_bytes": 2613
+    },
+    {
+      "name": "seen_vs_unseen_error_patterns",
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/tables/seen_vs_unseen_error_patterns.csv",
+      "category": "error_analysis_09",
+      "required": false,
+      "exists": true,
+      "description": "Padrões de erro em ataques vistos vs não vistos/adaptativos.",
+      "export_subdir": "error_analysis_09",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/error_analysis_09/seen_vs_unseen_error_patterns.csv",
+      "line_count": 23,
+      "size_bytes": 2548
+    },
+    {
+      "name": "discussion_top_attack_following",
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/tables/discussion_top_attack_following.csv",
+      "category": "error_analysis_09",
+      "required": false,
+      "exists": true,
+      "description": "Grupos relevantes para discutir seguimento de ataque.",
+      "export_subdir": "error_analysis_09",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/error_analysis_09/discussion_top_attack_following.csv",
+      "line_count": 31,
+      "size_bytes": 3830
+    },
+    {
+      "name": "discussion_top_task_errors",
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/tables/discussion_top_task_errors.csv",
+      "category": "error_analysis_09",
+      "required": false,
+      "exists": true,
+      "description": "Tasks relevantes para discussão.",
+      "export_subdir": "error_analysis_09",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/error_analysis_09/discussion_top_task_errors.csv",
+      "line_count": 31,
+      "size_bytes": 3403
+    },
+    {
+      "name": "discussion_paired_vs_c0",
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/tables/discussion_paired_vs_c0.csv",
+      "category": "error_analysis_09",
+      "required": false,
+      "exists": true,
+      "description": "Resumo pareado selecionado para discussão.",
+      "export_subdir": "error_analysis_09",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/tables/error_analysis_09/discussion_paired_vs_c0.csv",
+      "line_count": 31,
+      "size_bytes": 3248
+    },
+    {
+      "name": "05_inference",
+      "source_path": "/workspace/pi-defense-exp/manifests/inference/05_run_inference_manifest.json",
+      "category": "manifests",
+      "required": false,
+      "exists": true,
+      "description": "Manifesto 05_inference.",
+      "export_subdir": "manifests",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/manifests/05_run_inference_manifest.json",
+      "line_count": 362,
+      "size_bytes": 11495
+    },
+    {
+      "name": "06_metrics",
+      "source_path": "/workspace/pi-defense-exp/manifests/metrics/06_compute_metrics_manifest.json",
+      "category": "manifests",
+      "required": true,
+      "exists": true,
+      "description": "Manifesto 06_metrics.",
+      "export_subdir": "manifests",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/manifests/06_compute_metrics_manifest.json",
+      "line_count": 443,
+      "size_bytes": 14569
+    },
+    {
+      "name": "07_pairwise",
+      "source_path": "/workspace/pi-defense-exp/manifests/pairwise_metrics/07_pairwise_and_injected_metrics_manifest.json",
+      "category": "manifests",
+      "required": false,
+      "exists": true,
+      "description": "Manifesto 07_pairwise.",
+      "export_subdir": "manifests",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/manifests/07_pairwise_and_injected_metrics_manifest.json",
+      "line_count": 176,
+      "size_bytes": 6700
+    },
+    {
+      "name": "08_statistical_analysis",
+      "source_path": "/workspace/pi-defense-exp/manifests/statistical_analysis/08_statistical_analysis_manifest.json",
+      "category": "manifests",
+      "required": true,
+      "exists": true,
+      "description": "Manifesto 08_statistical_analysis.",
+      "export_subdir": "manifests",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/manifests/08_statistical_analysis_manifest.json",
+      "line_count": 87,
+      "size_bytes": 4338
+    },
+    {
+      "name": "09_error_analysis",
+      "source_path": "/workspace/pi-defense-exp/manifests/error_analysis/09_error_analysis_manifest.json",
+      "category": "manifests",
+      "required": true,
+      "exists": true,
+      "description": "Manifesto 09_error_analysis.",
+      "export_subdir": "manifests",
+      "copied": true,
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/manifests/09_error_analysis_manifest.json",
+      "line_count": 220,
+      "size_bytes": 10487
+    }
+  ],
+  "markdown_tables": [
+    {
+      "source_path": "/workspace/pi-defense-exp/results/statistical_analysis/full/discussion_table.csv",
+      "markdown_path": "/workspace/pi-defense-exp/exports/final_results/full/tables_markdown/discussion_table.md",
+      "created": true,
+      "rows": 5
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/results/statistical_analysis/full/scenario_compact_summary.csv",
+      "markdown_path": "/workspace/pi-defense-exp/exports/final_results/full/tables_markdown/scenario_compact_summary.md",
+      "created": true,
+      "rows": 5
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/results/statistical_analysis/full/metric_rankings.csv",
+      "markdown_path": "/workspace/pi-defense-exp/exports/final_results/full/tables_markdown/metric_rankings.md",
+      "created": true,
+      "rows": 74
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/results/statistical_analysis/full/deltas_vs_reference.csv",
+      "markdown_path": "/workspace/pi-defense-exp/exports/final_results/full/tables_markdown/deltas_vs_reference.md",
+      "created": true,
+      "rows": 136
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/compact_07_metrics.csv",
+      "markdown_path": "/workspace/pi-defense-exp/exports/final_results/full/tables_markdown/compact_07_metrics.md",
+      "created": true,
+      "rows": 11
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/win_rate_metrics.csv",
+      "markdown_path": "/workspace/pi-defense-exp/exports/final_results/full/tables_markdown/win_rate_metrics.md",
+      "created": true,
+      "rows": 10
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/tables/error_rates_by_task.csv",
+      "markdown_path": "/workspace/pi-defense-exp/exports/final_results/full/tables_markdown/error_rates_by_task.md",
+      "created": true,
+      "rows": 231
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/tables/error_rates_by_attack_type.csv",
+      "markdown_path": "/workspace/pi-defense-exp/exports/final_results/full/tables_markdown/error_rates_by_attack_type.md",
+      "created": true,
+      "rows": 88
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/tables/paired_summary_vs_c0.csv",
+      "markdown_path": "/workspace/pi-defense-exp/exports/final_results/full/tables_markdown/paired_summary_vs_c0.md",
+      "created": true,
+      "rows": 30
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/tables/invalid_outputs_summary.csv",
+      "markdown_path": "/workspace/pi-defense-exp/exports/final_results/full/tables_markdown/invalid_outputs_summary.md",
+      "created": true,
+      "rows": 48
+    }
+  ],
+  "safe_samples": [
+    {
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/safe_samples/attack_following_reductions_vs_c0_safe.jsonl",
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/safe_samples/attack_following_reductions_vs_c0_safe.jsonl",
+      "copied": true,
+      "rows": 600
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/safe_samples/clean_improvements_vs_c0_safe.jsonl",
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/safe_samples/clean_improvements_vs_c0_safe.jsonl",
+      "copied": true,
+      "rows": 300
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/safe_samples/clean_regressions_vs_c0_safe.jsonl",
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/safe_samples/clean_regressions_vs_c0_safe.jsonl",
+      "copied": true,
+      "rows": 300
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/safe_samples/invalid_outputs_safe.jsonl",
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/safe_samples/invalid_outputs_safe.jsonl",
+      "copied": true,
+      "rows": 156
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/safe_samples/robust_wins_vs_c0_safe.jsonl",
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/safe_samples/robust_wins_vs_c0_safe.jsonl",
+      "copied": true,
+      "rows": 600
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/results/error_analysis/full/safe_samples/shared_trained_failures_safe.jsonl",
+      "export_path": "/workspace/pi-defense-exp/exports/final_results/full/safe_samples/shared_trained_failures_safe.jsonl",
+      "copied": true,
+      "rows": 30
+    }
+  ],
+  "figures": [
+    {
+      "metric_column": "clean_accuracy_mean",
+      "title": "Clean Accuracy by scenario",
+      "figure_path": "/workspace/pi-defense-exp/exports/final_results/full/figures/clean_accuracy_by_scenario.png",
+      "created": true
+    },
+    {
+      "metric_column": "robust_accuracy_all_attacks_mean",
+      "title": "Robust Accuracy under all attacks by scenario",
+      "figure_path": "/workspace/pi-defense-exp/exports/final_results/full/figures/robust_accuracy_all_attacks_by_scenario.png",
+      "created": true
+    },
+    {
+      "metric_column": "targeted_asr_all_attacks_mean",
+      "title": "Targeted ASR under all attacks by scenario",
+      "figure_path": "/workspace/pi-defense-exp/exports/final_results/full/figures/targeted_asr_all_attacks_by_scenario.png",
+      "created": true
+    },
+    {
+      "metric_column": "invalid_output_rate_all_attacks_mean",
+      "title": "Invalid Output Rate under all attacks by scenario",
+      "figure_path": "/workspace/pi-defense-exp/exports/final_results/full/figures/invalid_output_rate_all_attacks_by_scenario.png",
+      "created": true
+    },
+    {
+      "metric_column": "adjusted_win_rate_clean_vs_c0_mean",
+      "title": "Adjusted Win Rate on clean examples vs C0",
+      "figure_path": "/workspace/pi-defense-exp/exports/final_results/full/figures/adjusted_win_rate_clean_vs_c0.png",
+      "created": true
+    }
+  ],
+  "final_file_index": "/workspace/pi-defense-exp/exports/final_results/full/index/final_export_file_index.csv",
+  "readme": "/workspace/pi-defense-exp/exports/final_results/full/README.md",
+  "options": {
+    "overwrite_export_dir": true,
+    "include_zip_archive": true,
+    "include_figures": true,
+    "include_per_example_files": false
+  }
+}

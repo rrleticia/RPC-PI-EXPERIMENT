@@ -1,0 +1,87 @@
+{
+  "notebook": "08_statistical_analysis",
+  "created_at_utc": "2026-06-30T14:40:41.747197+00:00",
+  "project_root": "/workspace/pi-defense-exp",
+  "run_mode": "full",
+  "inputs": {
+    "metrics_06_dir": "/workspace/pi-defense-exp/results/metrics/full",
+    "pairwise_07_dir": "/workspace/pi-defense-exp/results/pairwise_metrics/full",
+    "metrics_06_manifest": "/workspace/pi-defense-exp/manifests/metrics/06_compute_metrics_manifest.json",
+    "pairwise_07_manifest": "/workspace/pi-defense-exp/manifests/pairwise_metrics/07_pairwise_and_injected_metrics_manifest.json",
+    "direct_run_metrics": "/workspace/pi-defense-exp/results/metrics/full/compact_run_metrics.csv",
+    "pairwise_compact_metrics": "/workspace/pi-defense-exp/results/pairwise_metrics/full/compact_07_metrics.csv"
+  },
+  "outputs": {
+    "unified_run_metrics_csv": "/workspace/pi-defense-exp/results/statistical_analysis/full/unified_run_metrics.csv",
+    "scenario_metric_summary_csv": "/workspace/pi-defense-exp/results/statistical_analysis/full/scenario_metric_summary.csv",
+    "scenario_compact_summary_csv": "/workspace/pi-defense-exp/results/statistical_analysis/full/scenario_compact_summary.csv",
+    "deltas_vs_reference_csv": "/workspace/pi-defense-exp/results/statistical_analysis/full/deltas_vs_reference.csv",
+    "metric_rankings_csv": "/workspace/pi-defense-exp/results/statistical_analysis/full/metric_rankings.csv",
+    "tradeoff_components_csv": "/workspace/pi-defense-exp/results/statistical_analysis/full/tradeoff_components.csv",
+    "tradeoff_score_csv": "/workspace/pi-defense-exp/results/statistical_analysis/full/tradeoff_score.csv",
+    "seed_stability_csv": "/workspace/pi-defense-exp/results/statistical_analysis/full/seed_stability.csv",
+    "discussion_table_csv": "/workspace/pi-defense-exp/results/statistical_analysis/full/discussion_table.csv",
+    "discussion_table_md": "/workspace/pi-defense-exp/results/statistical_analysis/full/discussion_table.md",
+    "metric_catalog_csv": "/workspace/pi-defense-exp/results/statistical_analysis/full/metric_catalog_08.csv"
+  },
+  "logs": {
+    "events_log_path": "/workspace/pi-defense-exp/logs/statistical_analysis/08_statistical_analysis_events.jsonl",
+    "summary_log_path": "/workspace/pi-defense-exp/logs/statistical_analysis/08_statistical_analysis_summary_full.json",
+    "log_dir": "/workspace/pi-defense-exp/logs/statistical_analysis"
+  },
+  "counts": {
+    "unified_run_rows": 11,
+    "scenario_metric_summary_rows": 85,
+    "ranking_rows": 74,
+    "delta_rows": 136,
+    "tradeoff_score_rows": 5,
+    "discussion_table_rows": 5
+  },
+  "metrics_available": [
+    "clean_accuracy",
+    "utility_drop",
+    "robust_accuracy_seen",
+    "robust_accuracy_unseen",
+    "robust_accuracy_all_attacks",
+    "targeted_asr_seen",
+    "targeted_asr_unseen",
+    "targeted_asr_all_attacks",
+    "untargeted_asr_all_attacks",
+    "invalid_output_rate_all_attacks",
+    "pna_i_seen",
+    "pna_i_unseen",
+    "mr_seen",
+    "mr_unseen",
+    "mr_targeted_seen",
+    "mr_targeted_unseen",
+    "adjusted_win_rate_clean_vs_c0"
+  ],
+  "metrics_used_for_discussion_table": [
+    "clean_accuracy",
+    "utility_drop",
+    "robust_accuracy_all_attacks",
+    "targeted_asr_all_attacks",
+    "untargeted_asr_all_attacks",
+    "invalid_output_rate_all_attacks",
+    "mr_targeted_seen",
+    "mr_targeted_unseen",
+    "adjusted_win_rate_clean_vs_c0"
+  ],
+  "tradeoff_components": [
+    "clean_accuracy",
+    "robust_accuracy_all_attacks",
+    "targeted_asr_all_attacks",
+    "invalid_output_rate_all_attacks",
+    "mr_targeted_seen",
+    "mr_targeted_unseen",
+    "adjusted_win_rate_clean_vs_c0"
+  ],
+  "notes": [
+    "This notebook performs descriptive statistical consolidation only.",
+    "Confidence intervals are based on the observed seeds and should be interpreted cautiously because the number of seeds is small.",
+    "The exploratory trade-off score is not an official benchmark metric and should not replace individual metrics.",
+    "PNA-I is treated as diagnostic/neutral in ranking because its interpretation depends on the experimental context."
+  ],
+  "manifest_json_path": "/workspace/pi-defense-exp/manifests/statistical_analysis/08_statistical_analysis_manifest.json",
+  "manifest_md_path": "/workspace/pi-defense-exp/manifests/statistical_analysis/08_statistical_analysis_manifest.md"
+}

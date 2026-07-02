@@ -1,0 +1,443 @@
+{
+  "notebook": "06_compute_metrics",
+  "created_at_utc": "2026-06-30T02:34:08.550167+00:00",
+  "project_root": "/workspace/pi-defense-exp",
+  "run_mode": "full",
+  "base_model_id": "meta-llama/Llama-3.1-8B-Instruct",
+  "dataset_seed": 42,
+  "experiment_seeds": [
+    42,
+    123,
+    2026
+  ],
+  "inference_manifest_path": "/workspace/pi-defense-exp/manifests/inference/05_run_inference_manifest.json",
+  "inference_results_dir": "/workspace/pi-defense-exp/results/inference/full",
+  "metrics_results_dir": "/workspace/pi-defense-exp/results/metrics/full",
+  "events_log_path": "/workspace/pi-defense-exp/logs/metrics/06_compute_metrics_events.jsonl",
+  "summary_log_path": "/workspace/pi-defense-exp/logs/metrics/06_compute_metrics_summary_full.json",
+  "baseline_clean_accuracy_c0": 0.7729211087420043,
+  "baseline_robust_accuracy_c0": {
+    "attacked_seen": 0.12313432835820895,
+    "attacked_unseen": 0.3624733475479744,
+    "attacked_all": 0.212886460554371
+  },
+  "metrics_calculated": [
+    "clean_accuracy",
+    "benign_utility",
+    "pna_t",
+    "task_success_rate",
+    "utility_under_attack",
+    "robust_accuracy",
+    "untargeted_asr",
+    "attack_success_rate",
+    "targeted_asr",
+    "injection_following_rate",
+    "binary_asv",
+    "valid_output_rate",
+    "invalid_output_rate",
+    "utility_drop",
+    "clean_effectiveness",
+    "utility_drop_under_attack",
+    "robust_accuracy_delta_vs_c0"
+  ],
+  "metrics_deferred_to_future_notebook": [
+    "AUC",
+    "FPR",
+    "FNR",
+    "WR",
+    "PNA-I",
+    "MR"
+  ],
+  "input_files": [
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c0_base/seed_42/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c0_base/seed_42/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c0_base/seed_42/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "eval_split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c1_struq_format_only/seed_42/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c1_struq_format_only/seed_42/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c1_struq_format_only",
+      "seed": 42,
+      "eval_split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c1_struq_format_only/seed_42/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 42,
+      "eval_split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_42/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_42/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 42,
+      "eval_split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_42/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 123,
+      "eval_split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_123/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 123,
+      "eval_split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_123/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 123,
+      "eval_split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_123/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 2026,
+      "eval_split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_2026/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 2026,
+      "eval_split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_2026/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 2026,
+      "eval_split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_2026/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 42,
+      "eval_split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_42/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_42/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 42,
+      "eval_split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_42/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 123,
+      "eval_split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_123/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 123,
+      "eval_split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_123/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 123,
+      "eval_split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_123/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 2026,
+      "eval_split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_2026/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 2026,
+      "eval_split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_2026/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 2026,
+      "eval_split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_2026/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 42,
+      "eval_split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_42/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 42,
+      "eval_split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_42/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 42,
+      "eval_split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_42/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 123,
+      "eval_split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_123/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 123,
+      "eval_split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_123/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 123,
+      "eval_split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_123/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 2026,
+      "eval_split": "test_clean",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_2026/test_clean.jsonl",
+      "exists": true,
+      "rows": 1876
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 2026,
+      "eval_split": "test_attacked_seen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_2026/test_attacked_seen.jsonl",
+      "exists": true,
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 2026,
+      "eval_split": "test_attacked_unseen",
+      "path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_2026/test_attacked_unseen.jsonl",
+      "exists": true,
+      "rows": 5628
+    }
+  ],
+  "generated_files": [
+    {
+      "name": "metrics_catalog",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/metrics_catalog.json",
+      "exists": true,
+      "rows": "NaN"
+    },
+    {
+      "name": "run_split_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/run_split_metrics.csv",
+      "exists": true,
+      "rows": 33
+    },
+    {
+      "name": "run_split_metrics_jsonl",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/run_split_metrics.jsonl",
+      "exists": true,
+      "rows": 33
+    },
+    {
+      "name": "attacked_all_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/attacked_all_metrics.csv",
+      "exists": true,
+      "rows": 11
+    },
+    {
+      "name": "attacked_all_metrics_jsonl",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/attacked_all_metrics.jsonl",
+      "exists": true,
+      "rows": 11
+    },
+    {
+      "name": "run_level_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/run_level_metrics.csv",
+      "exists": true,
+      "rows": 11
+    },
+    {
+      "name": "run_level_metrics_jsonl",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/run_level_metrics.jsonl",
+      "exists": true,
+      "rows": 11
+    },
+    {
+      "name": "scenario_level_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/scenario_level_metrics.csv",
+      "exists": true,
+      "rows": 5
+    },
+    {
+      "name": "scenario_level_metrics_json",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/scenario_level_metrics.json",
+      "exists": true,
+      "rows": "NaN"
+    },
+    {
+      "name": "task_level_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/task_level_metrics.csv",
+      "exists": true,
+      "rows": 231
+    },
+    {
+      "name": "task_level_metrics_jsonl",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/task_level_metrics.jsonl",
+      "exists": true,
+      "rows": 231
+    },
+    {
+      "name": "attack_type_level_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/attack_type_level_metrics.csv",
+      "exists": true,
+      "rows": 88
+    },
+    {
+      "name": "attack_type_level_metrics_jsonl",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/attack_type_level_metrics.jsonl",
+      "exists": true,
+      "rows": 88
+    },
+    {
+      "name": "task_attack_level_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/task_attack_level_metrics.csv",
+      "exists": true,
+      "rows": 616
+    },
+    {
+      "name": "task_attack_level_metrics_jsonl",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/task_attack_level_metrics.jsonl",
+      "exists": true,
+      "rows": 616
+    },
+    {
+      "name": "compact_run_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/compact_run_metrics.csv",
+      "exists": true,
+      "rows": 11
+    },
+    {
+      "name": "compact_scenario_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/compact_scenario_metrics.csv",
+      "exists": true,
+      "rows": 5
+    },
+    {
+      "name": "per_example_metrics_jsonl",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/per_example_metrics.jsonl",
+      "exists": true,
+      "rows": 185724
+    },
+    {
+      "name": "per_example_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/metrics/full/per_example_metrics.csv",
+      "exists": true,
+      "rows": 185724
+    }
+  ],
+  "notes": [
+    "This notebook computes only metrics directly available from inference outputs.",
+    "Benign Utility and PNA-T are aliases of Clean Accuracy in this experiment.",
+    "Utility Under Attack is an alias of Robust Accuracy in this experiment.",
+    "Untargeted ASR is computed as 1 - Robust Accuracy on attacked examples.",
+    "Attack Success Rate, Targeted ASR, Injection Following Rate and Binary ASV share the same binary operationalization in this classification setup.",
+    "Utility Drop and Clean Effectiveness use C0 clean accuracy as baseline.",
+    "Utility Drop Under Attack and Robust Accuracy Delta vs C0 use C0 robust accuracy as baseline for each attacked group.",
+    "Metrics requiring detectors, continuous scores, injected-only evaluation or pairwise scenario comparison are deferred to notebook 07."
+  ]
+}

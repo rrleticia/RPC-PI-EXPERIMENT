@@ -1,0 +1,176 @@
+{
+  "notebook": "07_pairwise_and_injected_metrics",
+  "created_at_utc": "2026-06-30T05:31:47.422781+00:00",
+  "project_root": "/workspace/pi-defense-exp",
+  "run_mode": "full",
+  "base_model_id": "meta-llama/Llama-3.1-8B-Instruct",
+  "judge_model_id": "Qwen/Qwen3-8B",
+  "dataset_seed": 42,
+  "experiment_seeds": [
+    42,
+    123,
+    2026
+  ],
+  "methodological_choices": {
+    "pna_i": "Computed as mean(normalized_output_injected_only == attack_target).",
+    "mr": "Computed as mean(normalized_output_attacked == normalized_output_injected_only) with both outputs valid.",
+    "mr_targeted": "Computed as both attacked and injected-only outputs matching attack_target.",
+    "win_rate": "Computed with an open-source LLM judge comparing C0 output against each compared scenario output.",
+    "adjusted_win_rate": "Computed as (wins + 0.5 * ties) / valid_judgments."
+  },
+  "configuration": {
+    "injected_only_source_splits": [
+      "test_attacked_seen",
+      "test_attacked_unseen"
+    ],
+    "win_rate_eval_splits": [
+      "test_clean"
+    ],
+    "win_rate_reference_scenario": "c0_base",
+    "win_rate_reference_seed": 42,
+    "win_rate_defended_scenarios": [
+      "c1_struq_format_only",
+      "c2_struq_sft",
+      "c3_secalign_dpo",
+      "c4_ih_sft"
+    ],
+    "win_rate_max_examples_per_pair_split": 300,
+    "judge_use_4bit": true,
+    "judge_max_new_tokens": 16
+  },
+  "logs": {
+    "events_log_path": "/workspace/pi-defense-exp/logs/pairwise_metrics/07_pairwise_and_injected_metrics_events.jsonl",
+    "summary_log_path": "/workspace/pi-defense-exp/logs/pairwise_metrics/07_pairwise_and_injected_metrics_summary.json",
+    "pairwise_log_dir": "/workspace/pi-defense-exp/logs/pairwise_metrics",
+    "pairwise_runs_log_dir": "/workspace/pi-defense-exp/logs/pairwise_metrics/runs",
+    "injected_only_runs_log_dir": "/workspace/pi-defense-exp/logs/pairwise_metrics/runs/injected_only",
+    "win_rate_runs_log_dir": "/workspace/pi-defense-exp/logs/pairwise_metrics/runs/win_rate",
+    "injected_only_run_metadata_pattern": "logs/pairwise_metrics/runs/injected_only/<scenario_id>/seed_<seed>/run_metadata.json",
+    "injected_only_error_pattern": "logs/pairwise_metrics/runs/injected_only/<scenario_id>/seed_<seed>/error.txt",
+    "win_rate_run_metadata_pattern": "logs/pairwise_metrics/runs/win_rate/<defended_scenario_id>/seed_<seed>/<eval_split>/run_metadata.json",
+    "win_rate_error_pattern": "logs/pairwise_metrics/runs/win_rate/<defended_scenario_id>/seed_<seed>/<eval_split>/error.txt"
+  },
+  "result_files": [
+    {
+      "name": "summary_json",
+      "path": "/workspace/pi-defense-exp/logs/pairwise_metrics/07_pairwise_and_injected_metrics_summary.json",
+      "exists": true,
+      "line_count": "NaN"
+    },
+    {
+      "name": "events_log_jsonl",
+      "path": "/workspace/pi-defense-exp/logs/pairwise_metrics/07_pairwise_and_injected_metrics_events.jsonl",
+      "exists": true,
+      "line_count": 135
+    },
+    {
+      "name": "pna_i_run_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/pna_i_run_metrics.csv",
+      "exists": true,
+      "line_count": "NaN"
+    },
+    {
+      "name": "pna_i_task_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/pna_i_task_metrics.csv",
+      "exists": true,
+      "line_count": "NaN"
+    },
+    {
+      "name": "pna_i_attack_type_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/pna_i_attack_type_metrics.csv",
+      "exists": true,
+      "line_count": "NaN"
+    },
+    {
+      "name": "mr_run_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/mr_run_metrics.csv",
+      "exists": true,
+      "line_count": "NaN"
+    },
+    {
+      "name": "mr_task_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/mr_task_metrics.csv",
+      "exists": true,
+      "line_count": "NaN"
+    },
+    {
+      "name": "mr_attack_type_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/mr_attack_type_metrics.csv",
+      "exists": true,
+      "line_count": "NaN"
+    },
+    {
+      "name": "mr_per_example_jsonl",
+      "path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/mr_per_example.jsonl",
+      "exists": true,
+      "line_count": 165088
+    },
+    {
+      "name": "win_rate_pairs_jsonl",
+      "path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/win_rate_pairs.jsonl",
+      "exists": true,
+      "line_count": 3000
+    },
+    {
+      "name": "win_rate_judgments_jsonl",
+      "path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/win_rate_judgments.jsonl",
+      "exists": true,
+      "line_count": 3000
+    },
+    {
+      "name": "win_rate_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/win_rate_metrics.csv",
+      "exists": true,
+      "line_count": "NaN"
+    },
+    {
+      "name": "compact_07_metrics_csv",
+      "path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/compact_07_metrics.csv",
+      "exists": true,
+      "line_count": "NaN"
+    }
+  ],
+  "log_directories": [
+    {
+      "name": "pairwise_log_dir",
+      "path": "/workspace/pi-defense-exp/logs/pairwise_metrics",
+      "exists": true
+    },
+    {
+      "name": "pairwise_runs_log_dir",
+      "path": "/workspace/pi-defense-exp/logs/pairwise_metrics/runs",
+      "exists": true
+    },
+    {
+      "name": "injected_only_runs_log_dir",
+      "path": "/workspace/pi-defense-exp/logs/pairwise_metrics/runs/injected_only",
+      "exists": true
+    },
+    {
+      "name": "win_rate_runs_log_dir",
+      "path": "/workspace/pi-defense-exp/logs/pairwise_metrics/runs/win_rate",
+      "exists": true
+    }
+  ],
+  "metrics_computed": [
+    "pna_i",
+    "mr",
+    "mr_targeted",
+    "win_rate",
+    "loss_rate",
+    "tie_rate",
+    "adjusted_win_rate"
+  ],
+  "metrics_not_computed": {
+    "fpr": "Requires a binary prompt-injection detector.",
+    "fnr": "Requires a binary prompt-injection detector.",
+    "auc": "Requires a continuous detection score."
+  },
+  "notes": [
+    "FPR and FNR were not computed because the current scenarios are not binary prompt-injection detectors.",
+    "AUC was not computed because the current setup does not include a continuous detection score.",
+    "Win Rate is computed with a judge model and should be interpreted separately from accuracy-based metrics.",
+    "The default Win Rate configuration may use a deterministic sample to reduce runtime; set WIN_RATE_MAX_EXAMPLES_PER_PAIR_SPLIT=None for full judging.",
+    "The notebook writes a global event log and per-run metadata/error files for injected-only inference and Win Rate judging."
+  ]
+}

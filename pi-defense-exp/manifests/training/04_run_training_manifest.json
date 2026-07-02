@@ -1,0 +1,464 @@
+{
+  "notebook": "04_run_training",
+  "created_at_utc": "2026-06-29T19:14:00.248047+00:00",
+  "project_root": "/workspace/pi-defense-exp",
+  "base_model_id": "meta-llama/Llama-3.1-8B-Instruct",
+  "dataset_seed": 42,
+  "experiment_seeds": [
+    42,
+    123,
+    2026
+  ],
+  "replicates_per_trained_scenario": 3,
+  "total_expected_adapter_runs": 9,
+  "expected_python": "/workspace/pi-defense-exp/.venv/bin/python",
+  "current_python": "/workspace/pi-defense-exp/.venv/bin/python",
+  "system": {
+    "platform": "Linux-6.8.0-40-generic-x86_64-with-glibc2.39",
+    "python_version": "3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0]"
+  },
+  "gpu": {
+    "device_name": "NVIDIA GeForce RTX 5090",
+    "total_memory_gb": 31.36669921875,
+    "cuda_version": "12.8",
+    "bf16_supported": true,
+    "precision": "bf16"
+  },
+  "hyperparameters": {
+    "dataset_seed": 42,
+    "experiment_seeds": [
+      42,
+      123,
+      2026
+    ],
+    "replicates_per_trained_scenario": 3,
+    "scenarios_to_run": [
+      "c2_struq_sft",
+      "c3_secalign_dpo",
+      "c4_ih_sft"
+    ],
+    "max_seq_length": 1024,
+    "num_train_epochs": 1,
+    "per_device_train_batch_size": 1,
+    "per_device_eval_batch_size": 1,
+    "gradient_accumulation_steps": 16,
+    "sft_learning_rate": 0.0002,
+    "dpo_learning_rate": 5e-05,
+    "precision": "bf16"
+  },
+  "lora": {
+    "r": 16,
+    "lora_alpha": 32,
+    "lora_dropout": 0.05,
+    "target_modules": "{'gate_proj', 'down_proj', 'up_proj', 'k_proj', 'q_proj', 'v_proj', 'o_proj'}",
+    "load_in_4bit": true,
+    "quant_type": "nf4",
+    "compute_dtype": "bf16"
+  },
+  "training_files": {
+    "c2_struq_sft": {
+      "method": "sft",
+      "train": "/workspace/pi-defense-exp/data/views/struq/train_sft.jsonl",
+      "validation": "/workspace/pi-defense-exp/data/views/struq/validation_sft.jsonl",
+      "expected_train_rows": 4200,
+      "expected_validation_rows": 700
+    },
+    "c3_secalign_dpo": {
+      "method": "dpo",
+      "train": "/workspace/pi-defense-exp/data/views/secalign/train_dpo.jsonl",
+      "validation": "/workspace/pi-defense-exp/data/views/secalign/validation_dpo.jsonl",
+      "expected_train_rows": 2100,
+      "expected_validation_rows": 350
+    },
+    "c4_ih_sft": {
+      "method": "sft",
+      "train": "/workspace/pi-defense-exp/data/views/ih/train_sft.jsonl",
+      "validation": "/workspace/pi-defense-exp/data/views/ih/validation_sft.jsonl",
+      "expected_train_rows": 4200,
+      "expected_validation_rows": 700
+    }
+  },
+  "scenarios_run": [
+    "c2_struq_sft",
+    "c3_secalign_dpo",
+    "c4_ih_sft"
+  ],
+  "training_results": [
+    {
+      "scenario": "c2_struq_sft",
+      "seed": 42,
+      "method": "sft",
+      "status": "completed",
+      "started_at_utc": "2026-06-29T16:16:41.127728+00:00",
+      "finished_at_utc": "2026-06-29T16:39:09.211723+00:00",
+      "output_dir": "/workspace/pi-defense-exp/adapters/struq/seed_42",
+      "run_log_dir": "/workspace/pi-defense-exp/logs/training/runs/c2_struq_sft/seed_42",
+      "train_rows": 4200,
+      "validation_rows": 700,
+      "elapsed_seconds": 1348.0839791297913,
+      "train_metrics": {
+        "train_runtime": 1337.1004,
+        "train_samples_per_second": 3.141,
+        "train_steps_per_second": 0.197,
+        "total_flos": 2.6539631964463104e+16,
+        "train_loss": 0.6704556194095104,
+        "epoch": 1.0
+      }
+    },
+    {
+      "scenario": "c2_struq_sft",
+      "seed": 123,
+      "method": "sft",
+      "status": "completed",
+      "started_at_utc": "2026-06-29T16:39:09.216802+00:00",
+      "finished_at_utc": "2026-06-29T17:01:31.660514+00:00",
+      "output_dir": "/workspace/pi-defense-exp/adapters/struq/seed_123",
+      "run_log_dir": "/workspace/pi-defense-exp/logs/training/runs/c2_struq_sft/seed_123",
+      "train_rows": 4200,
+      "validation_rows": 700,
+      "elapsed_seconds": 1342.4436922073364,
+      "train_metrics": {
+        "train_runtime": 1334.5764,
+        "train_samples_per_second": 3.147,
+        "train_steps_per_second": 0.197,
+        "total_flos": 2.6539631964463104e+16,
+        "train_loss": 0.6673558828042034,
+        "epoch": 1.0
+      }
+    },
+    {
+      "scenario": "c2_struq_sft",
+      "seed": 2026,
+      "method": "sft",
+      "status": "completed",
+      "started_at_utc": "2026-06-29T17:01:31.664270+00:00",
+      "finished_at_utc": "2026-06-29T17:24:12.371489+00:00",
+      "output_dir": "/workspace/pi-defense-exp/adapters/struq/seed_2026",
+      "run_log_dir": "/workspace/pi-defense-exp/logs/training/runs/c2_struq_sft/seed_2026",
+      "train_rows": 4200,
+      "validation_rows": 700,
+      "elapsed_seconds": 1360.707197189331,
+      "train_metrics": {
+        "train_runtime": 1352.3877,
+        "train_samples_per_second": 3.106,
+        "train_steps_per_second": 0.194,
+        "total_flos": 2.6539631964463104e+16,
+        "train_loss": 0.6692890105591981,
+        "epoch": 1.0
+      }
+    },
+    {
+      "scenario": "c3_secalign_dpo",
+      "seed": 42,
+      "method": "dpo",
+      "status": "completed",
+      "started_at_utc": "2026-06-29T17:24:12.374991+00:00",
+      "finished_at_utc": "2026-06-29T17:38:13.417990+00:00",
+      "output_dir": "/workspace/pi-defense-exp/adapters/secalign/seed_42",
+      "run_log_dir": "/workspace/pi-defense-exp/logs/training/runs/c3_secalign_dpo/seed_42",
+      "train_rows": 2100,
+      "validation_rows": 350,
+      "elapsed_seconds": 841.0429813861847,
+      "train_metrics": {
+        "train_runtime": 834.1819,
+        "train_samples_per_second": 2.517,
+        "train_steps_per_second": 0.158,
+        "total_flos": 1.714527594283008e+16,
+        "train_loss": 0.03878795397306958,
+        "epoch": 1.0
+      }
+    },
+    {
+      "scenario": "c3_secalign_dpo",
+      "seed": 123,
+      "method": "dpo",
+      "status": "completed",
+      "started_at_utc": "2026-06-29T17:38:13.426266+00:00",
+      "finished_at_utc": "2026-06-29T17:52:15.520352+00:00",
+      "output_dir": "/workspace/pi-defense-exp/adapters/secalign/seed_123",
+      "run_log_dir": "/workspace/pi-defense-exp/logs/training/runs/c3_secalign_dpo/seed_123",
+      "train_rows": 2100,
+      "validation_rows": 350,
+      "elapsed_seconds": 842.094057559967,
+      "train_metrics": {
+        "train_runtime": 834.4206,
+        "train_samples_per_second": 2.517,
+        "train_steps_per_second": 0.158,
+        "total_flos": 1.714527594283008e+16,
+        "train_loss": 0.05918649855404069,
+        "epoch": 1.0
+      }
+    },
+    {
+      "scenario": "c3_secalign_dpo",
+      "seed": 2026,
+      "method": "dpo",
+      "status": "completed",
+      "started_at_utc": "2026-06-29T17:52:15.524524+00:00",
+      "finished_at_utc": "2026-06-29T18:06:18.325934+00:00",
+      "output_dir": "/workspace/pi-defense-exp/adapters/secalign/seed_2026",
+      "run_log_dir": "/workspace/pi-defense-exp/logs/training/runs/c3_secalign_dpo/seed_2026",
+      "train_rows": 2100,
+      "validation_rows": 350,
+      "elapsed_seconds": 842.8013832569122,
+      "train_metrics": {
+        "train_runtime": 835.728,
+        "train_samples_per_second": 2.513,
+        "train_steps_per_second": 0.158,
+        "total_flos": 1.714527594283008e+16,
+        "train_loss": 0.04003917363865405,
+        "epoch": 1.0
+      }
+    },
+    {
+      "scenario": "c4_ih_sft",
+      "seed": 42,
+      "method": "sft",
+      "status": "completed",
+      "started_at_utc": "2026-06-29T18:06:18.332761+00:00",
+      "finished_at_utc": "2026-06-29T18:29:06.574059+00:00",
+      "output_dir": "/workspace/pi-defense-exp/adapters/ih/seed_42",
+      "run_log_dir": "/workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_42",
+      "train_rows": 4200,
+      "validation_rows": 700,
+      "elapsed_seconds": 1368.2412796020508,
+      "train_metrics": {
+        "train_runtime": 1360.2834,
+        "train_samples_per_second": 3.088,
+        "train_steps_per_second": 0.193,
+        "total_flos": 2.8568954504749056e+16,
+        "train_loss": 0.6480978129027914,
+        "epoch": 1.0
+      }
+    },
+    {
+      "scenario": "c4_ih_sft",
+      "seed": 123,
+      "method": "sft",
+      "status": "completed",
+      "started_at_utc": "2026-06-29T18:29:06.577373+00:00",
+      "finished_at_utc": "2026-06-29T18:51:44.631098+00:00",
+      "output_dir": "/workspace/pi-defense-exp/adapters/ih/seed_123",
+      "run_log_dir": "/workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_123",
+      "train_rows": 4200,
+      "validation_rows": 700,
+      "elapsed_seconds": 1358.0537042617798,
+      "train_metrics": {
+        "train_runtime": 1350.4459,
+        "train_samples_per_second": 3.11,
+        "train_steps_per_second": 0.195,
+        "total_flos": 2.8568954504749056e+16,
+        "train_loss": 0.6431610983134223,
+        "epoch": 1.0
+      }
+    },
+    {
+      "scenario": "c4_ih_sft",
+      "seed": 2026,
+      "method": "sft",
+      "status": "completed",
+      "started_at_utc": "2026-06-29T18:51:44.635021+00:00",
+      "finished_at_utc": "2026-06-29T19:14:00.198664+00:00",
+      "output_dir": "/workspace/pi-defense-exp/adapters/ih/seed_2026",
+      "run_log_dir": "/workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_2026",
+      "train_rows": 4200,
+      "validation_rows": 700,
+      "elapsed_seconds": 1335.5636246204376,
+      "train_metrics": {
+        "train_runtime": 1327.8416,
+        "train_samples_per_second": 3.163,
+        "train_steps_per_second": 0.198,
+        "total_flos": 2.8568954504749056e+16,
+        "train_loss": 0.6446350432167488,
+        "epoch": 1.0
+      }
+    }
+  ],
+  "adapter_status": [
+    {
+      "scenario": "c2_struq_sft",
+      "seed": 42,
+      "output_dir": "/workspace/pi-defense-exp/adapters/struq/seed_42",
+      "exists": true,
+      "num_files": 29,
+      "sample_files": [
+        "README.md",
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "chat_template.jinja",
+        "checkpoint-200/README.md",
+        "checkpoint-200/adapter_config.json",
+        "checkpoint-200/adapter_model.safetensors",
+        "checkpoint-200/chat_template.jinja",
+        "checkpoint-200/optimizer.pt",
+        "checkpoint-200/rng_state.pth"
+      ]
+    },
+    {
+      "scenario": "c2_struq_sft",
+      "seed": 123,
+      "output_dir": "/workspace/pi-defense-exp/adapters/struq/seed_123",
+      "exists": true,
+      "num_files": 29,
+      "sample_files": [
+        "README.md",
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "chat_template.jinja",
+        "checkpoint-200/README.md",
+        "checkpoint-200/adapter_config.json",
+        "checkpoint-200/adapter_model.safetensors",
+        "checkpoint-200/chat_template.jinja",
+        "checkpoint-200/optimizer.pt",
+        "checkpoint-200/rng_state.pth"
+      ]
+    },
+    {
+      "scenario": "c2_struq_sft",
+      "seed": 2026,
+      "output_dir": "/workspace/pi-defense-exp/adapters/struq/seed_2026",
+      "exists": true,
+      "num_files": 29,
+      "sample_files": [
+        "README.md",
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "chat_template.jinja",
+        "checkpoint-200/README.md",
+        "checkpoint-200/adapter_config.json",
+        "checkpoint-200/adapter_model.safetensors",
+        "checkpoint-200/chat_template.jinja",
+        "checkpoint-200/optimizer.pt",
+        "checkpoint-200/rng_state.pth"
+      ]
+    },
+    {
+      "scenario": "c3_secalign_dpo",
+      "seed": 42,
+      "output_dir": "/workspace/pi-defense-exp/adapters/secalign/seed_42",
+      "exists": true,
+      "num_files": 29,
+      "sample_files": [
+        "README.md",
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "chat_template.jinja",
+        "checkpoint-100/README.md",
+        "checkpoint-100/adapter_config.json",
+        "checkpoint-100/adapter_model.safetensors",
+        "checkpoint-100/chat_template.jinja",
+        "checkpoint-100/optimizer.pt",
+        "checkpoint-100/rng_state.pth"
+      ]
+    },
+    {
+      "scenario": "c3_secalign_dpo",
+      "seed": 123,
+      "output_dir": "/workspace/pi-defense-exp/adapters/secalign/seed_123",
+      "exists": true,
+      "num_files": 29,
+      "sample_files": [
+        "README.md",
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "chat_template.jinja",
+        "checkpoint-100/README.md",
+        "checkpoint-100/adapter_config.json",
+        "checkpoint-100/adapter_model.safetensors",
+        "checkpoint-100/chat_template.jinja",
+        "checkpoint-100/optimizer.pt",
+        "checkpoint-100/rng_state.pth"
+      ]
+    },
+    {
+      "scenario": "c3_secalign_dpo",
+      "seed": 2026,
+      "output_dir": "/workspace/pi-defense-exp/adapters/secalign/seed_2026",
+      "exists": true,
+      "num_files": 29,
+      "sample_files": [
+        "README.md",
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "chat_template.jinja",
+        "checkpoint-100/README.md",
+        "checkpoint-100/adapter_config.json",
+        "checkpoint-100/adapter_model.safetensors",
+        "checkpoint-100/chat_template.jinja",
+        "checkpoint-100/optimizer.pt",
+        "checkpoint-100/rng_state.pth"
+      ]
+    },
+    {
+      "scenario": "c4_ih_sft",
+      "seed": 42,
+      "output_dir": "/workspace/pi-defense-exp/adapters/ih/seed_42",
+      "exists": true,
+      "num_files": 29,
+      "sample_files": [
+        "README.md",
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "chat_template.jinja",
+        "checkpoint-200/README.md",
+        "checkpoint-200/adapter_config.json",
+        "checkpoint-200/adapter_model.safetensors",
+        "checkpoint-200/chat_template.jinja",
+        "checkpoint-200/optimizer.pt",
+        "checkpoint-200/rng_state.pth"
+      ]
+    },
+    {
+      "scenario": "c4_ih_sft",
+      "seed": 123,
+      "output_dir": "/workspace/pi-defense-exp/adapters/ih/seed_123",
+      "exists": true,
+      "num_files": 29,
+      "sample_files": [
+        "README.md",
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "chat_template.jinja",
+        "checkpoint-200/README.md",
+        "checkpoint-200/adapter_config.json",
+        "checkpoint-200/adapter_model.safetensors",
+        "checkpoint-200/chat_template.jinja",
+        "checkpoint-200/optimizer.pt",
+        "checkpoint-200/rng_state.pth"
+      ]
+    },
+    {
+      "scenario": "c4_ih_sft",
+      "seed": 2026,
+      "output_dir": "/workspace/pi-defense-exp/adapters/ih/seed_2026",
+      "exists": true,
+      "num_files": 29,
+      "sample_files": [
+        "README.md",
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "chat_template.jinja",
+        "checkpoint-200/README.md",
+        "checkpoint-200/adapter_config.json",
+        "checkpoint-200/adapter_model.safetensors",
+        "checkpoint-200/chat_template.jinja",
+        "checkpoint-200/optimizer.pt",
+        "checkpoint-200/rng_state.pth"
+      ]
+    }
+  ],
+  "log_path": "/workspace/pi-defense-exp/logs/training/04_run_training.log",
+  "summary_log_json_path": "/workspace/pi-defense-exp/logs/training/04_run_training_summary.json",
+  "events_log_path": "/workspace/pi-defense-exp/logs/training/04_run_training_events.jsonl",
+  "runs_log_dir": "/workspace/pi-defense-exp/logs/training/runs",
+  "notes": [
+    "C0 and C1 do not train adapters and are not executed in this notebook.",
+    "C2 and C4 use SFT over clean + attacked seen examples.",
+    "C3 uses DPO over attacked seen examples only.",
+    "All trained scenarios start from the same base model checkpoint.",
+    "Each trained scenario is executed once for each seed in EXPERIMENT_SEEDS.",
+    "Adapter directories include seed-specific subdirectories to avoid overwriting experimental replicates.",
+    "Training runs are logged incrementally in a global JSONL event log.",
+    "Each scenario-seed pair has an individual run log directory."
+  ]
+}

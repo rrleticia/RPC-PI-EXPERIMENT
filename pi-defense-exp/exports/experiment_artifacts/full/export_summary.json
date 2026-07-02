@@ -1,0 +1,79 @@
+{
+  "notebook": "10_export_experiment_artifacts",
+  "created_at_utc": "2026-06-30T16:03:11.380385+00:00",
+  "project_root": "/workspace/pi-defense-exp",
+  "run_mode": "full",
+  "export_mode": "zip_from_sources_no_intermediate_copy",
+  "export_root": "/workspace/pi-defense-exp/exports/experiment_artifacts/full",
+  "zip_files_dir": "/workspace/zip_files",
+  "archive_path": "/workspace/zip_files/experiment_artifacts_full.zip",
+  "total_indexed_files": 603,
+  "total_indexed_size_mb": 6188.833643913269,
+  "summary_by_group": [
+    {
+      "group": "configs",
+      "files": 2,
+      "size_mb": 0.00926971435546875
+    },
+    {
+      "group": "data_canonical",
+      "files": 7,
+      "size_mb": 15.923454284667969
+    },
+    {
+      "group": "data_views",
+      "files": 9,
+      "size_mb": 20.715639114379883
+    },
+    {
+      "group": "logs",
+      "files": 99,
+      "size_mb": 2.448759078979492
+    },
+    {
+      "group": "manifests",
+      "files": 20,
+      "size_mb": 0.16292381286621094
+    },
+    {
+      "group": "model_adapters",
+      "files": 261,
+      "size_mb": 5492.132517814636
+    },
+    {
+      "group": "notebooks_directory",
+      "files": 10,
+      "size_mb": 2.043635368347168
+    },
+    {
+      "group": "results",
+      "files": 193,
+      "size_mb": 655.3972654342651
+    },
+    {
+      "group": "root_files",
+      "files": 2,
+      "size_mb": 0.000179290771484375
+    }
+  ],
+  "missing_optional_sources_count": 5,
+  "skipped_files_count": 22,
+  "export_policy": {
+    "export_mode": "zip_from_sources_no_intermediate_copy",
+    "run_mode": "full",
+    "export_root": "/workspace/pi-defense-exp/exports/experiment_artifacts/full",
+    "zip_files_dir": "/workspace/zip_files",
+    "archive_path": "/workspace/zip_files/experiment_artifacts_full.zip",
+    "include_configs": true,
+    "include_manifests": true,
+    "include_logs": true,
+    "include_data_canonical": true,
+    "include_data_views": true,
+    "include_results": true,
+    "include_notebooks": true,
+    "include_scripts": true,
+    "include_model_adapters": true,
+    "include_data_cache": false,
+    "include_environment": true
+  }
+}

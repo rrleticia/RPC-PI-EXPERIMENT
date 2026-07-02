@@ -1,0 +1,19 @@
+{
+  "notebook": "13_export_huggingface_upload_artifacts",
+  "created_at_utc": "2026-07-02T04:04:01.623068+00:00",
+  "project_root": "/workspace/pi-defense-exp",
+  "run_mode": "full",
+  "export_root": "/workspace/pi-defense-exp/exports/huggingface_upload_artifacts/full",
+  "archive_path": "/workspace/zip_files/huggingface_upload_artifacts_full.zip",
+  "max_file_size_mb": 50,
+  "total_files_indexed": 16,
+  "total_size_mb": 0.074127197265625,
+  "missing_optional_sources": 0,
+  "skipped_files": 0,
+  "policy": {
+    "no_intermediate_copy_of_large_artifacts": true,
+    "zip_reads_from_original_sources": true,
+    "exclude_model_weights_and_adapters": true,
+    "exclude_dataset_cache": true
+  }
+}

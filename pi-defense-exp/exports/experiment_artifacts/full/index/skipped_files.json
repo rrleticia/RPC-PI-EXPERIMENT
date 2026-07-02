@@ -1,0 +1,134 @@
+[
+  {
+    "group": "data_cache",
+    "path": "/workspace/pi-defense-exp/data/cache",
+    "project_relative_path": "data/cache",
+    "reason": "disabled_by_configuration"
+  },
+  {
+    "group": "logs",
+    "path": "/workspace/pi-defense-exp/logs/metrics/.ipynb_checkpoints/06_compute_metrics_events-checkpoint.jsonl",
+    "project_relative_path": "logs/metrics/.ipynb_checkpoints/06_compute_metrics_events-checkpoint.jsonl",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "logs",
+    "path": "/workspace/pi-defense-exp/logs/training/.ipynb_checkpoints/04_run_training-checkpoint.log",
+    "project_relative_path": "logs/training/.ipynb_checkpoints/04_run_training-checkpoint.log",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "logs",
+    "path": "/workspace/pi-defense-exp/logs/training/.ipynb_checkpoints/04_run_training_events-checkpoint.jsonl",
+    "project_relative_path": "logs/training/.ipynb_checkpoints/04_run_training_events-checkpoint.jsonl",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "logs",
+    "path": "/workspace/pi-defense-exp/logs/training/.ipynb_checkpoints/04_run_training_summary-checkpoint.json",
+    "project_relative_path": "logs/training/.ipynb_checkpoints/04_run_training_summary-checkpoint.json",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "logs",
+    "path": "/workspace/pi-defense-exp/logs/training/runs/c3_secalign_dpo/seed_42/.ipynb_checkpoints/error-checkpoint.txt",
+    "project_relative_path": "logs/training/runs/c3_secalign_dpo/seed_42/.ipynb_checkpoints/error-checkpoint.txt",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "logs",
+    "path": "/workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_123/.ipynb_checkpoints/run_metadata-checkpoint.json",
+    "project_relative_path": "logs/training/runs/c4_ih_sft/seed_123/.ipynb_checkpoints/run_metadata-checkpoint.json",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "logs",
+    "path": "/workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_42/.ipynb_checkpoints/run_metadata-checkpoint.json",
+    "project_relative_path": "logs/training/runs/c4_ih_sft/seed_42/.ipynb_checkpoints/run_metadata-checkpoint.json",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "results",
+    "path": "/workspace/pi-defense-exp/results/inference/full/c0_base/seed_42/.ipynb_checkpoints/test_attacked_seen-checkpoint.jsonl",
+    "project_relative_path": "results/inference/full/c0_base/seed_42/.ipynb_checkpoints/test_attacked_seen-checkpoint.jsonl",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "results",
+    "path": "/workspace/pi-defense-exp/results/injected_only/full/c0_base/seed_42/.ipynb_checkpoints/test_injected_only_seen-checkpoint.jsonl",
+    "project_relative_path": "results/injected_only/full/c0_base/seed_42/.ipynb_checkpoints/test_injected_only_seen-checkpoint.jsonl",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "results",
+    "path": "/workspace/pi-defense-exp/results/injected_only/full/c0_base/seed_42/.ipynb_checkpoints/test_injected_only_unseen_metadata-checkpoint.json",
+    "project_relative_path": "results/injected_only/full/c0_base/seed_42/.ipynb_checkpoints/test_injected_only_unseen_metadata-checkpoint.json",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "results",
+    "path": "/workspace/pi-defense-exp/results/statistical_analysis/full/.ipynb_checkpoints/deltas_vs_reference-checkpoint.csv",
+    "project_relative_path": "results/statistical_analysis/full/.ipynb_checkpoints/deltas_vs_reference-checkpoint.csv",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "notebooks_directory",
+    "path": "/workspace/pi-defense-exp/notebooks/.ipynb_checkpoints/01_environment_setup-checkpoint.ipynb",
+    "project_relative_path": "notebooks/.ipynb_checkpoints/01_environment_setup-checkpoint.ipynb",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "notebooks_directory",
+    "path": "/workspace/pi-defense-exp/notebooks/.ipynb_checkpoints/02_dataset_creation-checkpoint.ipynb",
+    "project_relative_path": "notebooks/.ipynb_checkpoints/02_dataset_creation-checkpoint.ipynb",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "notebooks_directory",
+    "path": "/workspace/pi-defense-exp/notebooks/.ipynb_checkpoints/03_training_documentation-checkpoint.ipynb",
+    "project_relative_path": "notebooks/.ipynb_checkpoints/03_training_documentation-checkpoint.ipynb",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "notebooks_directory",
+    "path": "/workspace/pi-defense-exp/notebooks/.ipynb_checkpoints/04_run_training-checkpoint.ipynb",
+    "project_relative_path": "notebooks/.ipynb_checkpoints/04_run_training-checkpoint.ipynb",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "notebooks_directory",
+    "path": "/workspace/pi-defense-exp/notebooks/.ipynb_checkpoints/05_run_inference-checkpoint.ipynb",
+    "project_relative_path": "notebooks/.ipynb_checkpoints/05_run_inference-checkpoint.ipynb",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "notebooks_directory",
+    "path": "/workspace/pi-defense-exp/notebooks/.ipynb_checkpoints/06_compute_metrics-checkpoint.ipynb",
+    "project_relative_path": "notebooks/.ipynb_checkpoints/06_compute_metrics-checkpoint.ipynb",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "notebooks_directory",
+    "path": "/workspace/pi-defense-exp/notebooks/.ipynb_checkpoints/07_pairwise_and_injected_metrics_with_run_logs-checkpoint.ipynb",
+    "project_relative_path": "notebooks/.ipynb_checkpoints/07_pairwise_and_injected_metrics_with_run_logs-checkpoint.ipynb",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "notebooks_directory",
+    "path": "/workspace/pi-defense-exp/notebooks/.ipynb_checkpoints/08_statistical_analysis-checkpoint.ipynb",
+    "project_relative_path": "notebooks/.ipynb_checkpoints/08_statistical_analysis-checkpoint.ipynb",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "notebooks_directory",
+    "path": "/workspace/pi-defense-exp/notebooks/.ipynb_checkpoints/09_error_analysis-checkpoint.ipynb",
+    "project_relative_path": "notebooks/.ipynb_checkpoints/09_error_analysis-checkpoint.ipynb",
+    "reason": "excluded_directory_name"
+  },
+  {
+    "group": "notebooks_directory",
+    "path": "/workspace/pi-defense-exp/notebooks/.ipynb_checkpoints/10_export_experiment_artifacts_no_copy-checkpoint.ipynb",
+    "project_relative_path": "notebooks/.ipynb_checkpoints/10_export_experiment_artifacts_no_copy-checkpoint.ipynb",
+    "reason": "excluded_directory_name"
+  }
+]

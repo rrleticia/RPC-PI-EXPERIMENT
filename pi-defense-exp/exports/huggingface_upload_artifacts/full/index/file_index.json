@@ -1,0 +1,132 @@
+{
+  "files": [
+    {
+      "source_name": "model_upload_exports",
+      "source_path": "/workspace/pi-defense-exp/exports/huggingface_upload/README.md",
+      "archive_path": "huggingface_upload_artifacts/model_upload/exports/README.md",
+      "size_bytes": 2769,
+      "size_mb": 0.0026407241821289062,
+      "sha256": "4e49f48613fb69df227337d001e08786887fbe503bffd217fda342bc1550baed"
+    },
+    {
+      "source_name": "model_upload_exports",
+      "source_path": "/workspace/pi-defense-exp/exports/huggingface_upload/experiment_adapters_manifest.json",
+      "archive_path": "huggingface_upload_artifacts/model_upload/exports/experiment_adapters_manifest.json",
+      "size_bytes": 5588,
+      "size_mb": 0.005329132080078125,
+      "sha256": "ab16f43266ededc50dcf327dff1edb32d72e52bc06524dd2481166e2a51c9d38"
+    },
+    {
+      "source_name": "model_upload_exports",
+      "source_path": "/workspace/pi-defense-exp/exports/huggingface_upload/adapter_loading_examples.json",
+      "archive_path": "huggingface_upload_artifacts/model_upload/exports/adapter_loading_examples.json",
+      "size_bytes": 2388,
+      "size_mb": 0.002277374267578125,
+      "sha256": "a51e3ac42c43af48d86c49455c3a49be62659207a9c85e25084358597fe20d1f"
+    },
+    {
+      "source_name": "model_upload_exports",
+      "source_path": "/workspace/pi-defense-exp/exports/huggingface_upload/remote_files.json",
+      "archive_path": "huggingface_upload_artifacts/model_upload/exports/remote_files.json",
+      "size_bytes": 2815,
+      "size_mb": 0.0026845932006835938,
+      "sha256": "548595180bfca22bce046dddfaff7ecfabca9355fd9658c7e84399db867d94b0"
+    },
+    {
+      "source_name": "model_upload_logs",
+      "source_path": "/workspace/pi-defense-exp/logs/huggingface_upload/11_upload_adapters_to_huggingface_events.jsonl",
+      "archive_path": "huggingface_upload_artifacts/model_upload/logs/11_upload_adapters_to_huggingface_events.jsonl",
+      "size_bytes": 20233,
+      "size_mb": 0.019295692443847656,
+      "sha256": "3a6c31ce1a9dc64c0f99fd2735baf7cb1799912339cafeb5935650f2cea37de9"
+    },
+    {
+      "source_name": "model_upload_manifests",
+      "source_path": "/workspace/pi-defense-exp/manifests/huggingface_upload/11_upload_adapters_to_huggingface_manifest.json",
+      "archive_path": "huggingface_upload_artifacts/model_upload/manifests/11_upload_adapters_to_huggingface_manifest.json",
+      "size_bytes": 9355,
+      "size_mb": 0.008921623229980469,
+      "sha256": "25566a6222a779f7d7615e71ad71d4a73a393c5a4019cf1896a333168fab9a44"
+    },
+    {
+      "source_name": "model_upload_manifests",
+      "source_path": "/workspace/pi-defense-exp/manifests/huggingface_upload/11_upload_adapters_to_huggingface_manifest.md",
+      "archive_path": "huggingface_upload_artifacts/model_upload/manifests/11_upload_adapters_to_huggingface_manifest.md",
+      "size_bytes": 2376,
+      "size_mb": 0.00226593017578125,
+      "sha256": "261af8b7fa65b091da7063c2e343c659f96eca2c6e19b8e6f212ccf30c66b1f9"
+    },
+    {
+      "source_name": "dataset_upload_exports",
+      "source_path": "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/README.md",
+      "archive_path": "huggingface_upload_artifacts/dataset_upload/exports/README.md",
+      "size_bytes": 4148,
+      "size_mb": 0.003955841064453125,
+      "sha256": "2ae684122975076c96df3d4000b2ed3bb9310505eb451d68788c237b5a1bd714"
+    },
+    {
+      "source_name": "dataset_upload_exports",
+      "source_path": "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/file_index.csv",
+      "archive_path": "huggingface_upload_artifacts/dataset_upload/exports/file_index.csv",
+      "size_bytes": 3221,
+      "size_mb": 0.0030717849731445312,
+      "sha256": "c3a4eef7bb41c2917d3117e6468c8f52bbaf8eb9e02ad3caedfe423d248362b2"
+    },
+    {
+      "source_name": "dataset_upload_exports",
+      "source_path": "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/file_index.json",
+      "archive_path": "huggingface_upload_artifacts/dataset_upload/exports/file_index.json",
+      "size_bytes": 5617,
+      "size_mb": 0.005356788635253906,
+      "sha256": "303a77f21bbde7ba010605cc8f0cd0817a2151f7e622dbc8efddc99a30f6211c"
+    },
+    {
+      "source_name": "dataset_upload_exports",
+      "source_path": "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/missing_optional_sources.json",
+      "archive_path": "huggingface_upload_artifacts/dataset_upload/exports/missing_optional_sources.json",
+      "size_bytes": 27,
+      "size_mb": 2.574920654296875e-05,
+      "sha256": "a05cd6f486ac6640859007e34c028a12e85477d40eaf70e88058bdcbd95dfd60"
+    },
+    {
+      "source_name": "dataset_upload_exports",
+      "source_path": "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/experiment_dataset_upload_manifest.json",
+      "archive_path": "huggingface_upload_artifacts/dataset_upload/exports/experiment_dataset_upload_manifest.json",
+      "size_bytes": 5144,
+      "size_mb": 0.00490570068359375,
+      "sha256": "4373ff2e1aee8d1064ed020abb6bdf5a08552cb428dcb3ae63ca0cd4a3b9e9e1"
+    },
+    {
+      "source_name": "dataset_upload_exports",
+      "source_path": "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/dry_run_summary.json",
+      "archive_path": "huggingface_upload_artifacts/dataset_upload/exports/dry_run_summary.json",
+      "size_bytes": 285,
+      "size_mb": 0.00027179718017578125,
+      "sha256": "4b7d92c753ee3da8990bb4e1a1316680a9c4099ac1fd1fb2317ebc6f88b27699"
+    },
+    {
+      "source_name": "dataset_upload_logs",
+      "source_path": "/workspace/pi-defense-exp/logs/huggingface_dataset_upload/12_upload_dataset_to_huggingface_events.jsonl",
+      "archive_path": "huggingface_upload_artifacts/dataset_upload/logs/12_upload_dataset_to_huggingface_events.jsonl",
+      "size_bytes": 6917,
+      "size_mb": 0.006596565246582031,
+      "sha256": "ec49c14b62651c4f018b0f9b48c38f53d89a78038b3e52c14f58c84f72b37857"
+    },
+    {
+      "source_name": "dataset_upload_manifests",
+      "source_path": "/workspace/pi-defense-exp/manifests/huggingface_dataset_upload/12_upload_dataset_to_huggingface_manifest.json",
+      "archive_path": "huggingface_upload_artifacts/dataset_upload/manifests/12_upload_dataset_to_huggingface_manifest.json",
+      "size_bytes": 5027,
+      "size_mb": 0.004794120788574219,
+      "sha256": "e50bee6cb4b9ab2e7f3bf84a7b15ba7e2e31ed60e59e3dd8e04d9a823fb1ed44"
+    },
+    {
+      "source_name": "dataset_upload_manifests",
+      "source_path": "/workspace/pi-defense-exp/manifests/huggingface_dataset_upload/12_upload_dataset_to_huggingface_manifest.md",
+      "archive_path": "huggingface_upload_artifacts/dataset_upload/manifests/12_upload_dataset_to_huggingface_manifest.md",
+      "size_bytes": 1818,
+      "size_mb": 0.0017337799072265625,
+      "sha256": "660a4e5f4eb4c9bb2b7231f69ad6ba10bbc8b25b6f9bc9c9f6df87933407b2e7"
+    }
+  ]
+}

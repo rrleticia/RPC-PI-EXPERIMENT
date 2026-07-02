@@ -1,0 +1,60 @@
+{
+  "repo_id": "leinha/pi-defense-adapters",
+  "base_model_id": "meta-llama/Llama-3.1-8B-Instruct",
+  "examples": [
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 42,
+      "adapter_subfolder": "c2_struq_sft/seed_42",
+      "code": "model = PeftModel.from_pretrained(base_model, \"leinha/pi-defense-adapters\", subfolder=\"c2_struq_sft/seed_42\")"
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 123,
+      "adapter_subfolder": "c2_struq_sft/seed_123",
+      "code": "model = PeftModel.from_pretrained(base_model, \"leinha/pi-defense-adapters\", subfolder=\"c2_struq_sft/seed_123\")"
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 2026,
+      "adapter_subfolder": "c2_struq_sft/seed_2026",
+      "code": "model = PeftModel.from_pretrained(base_model, \"leinha/pi-defense-adapters\", subfolder=\"c2_struq_sft/seed_2026\")"
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 42,
+      "adapter_subfolder": "c3_secalign_dpo/seed_42",
+      "code": "model = PeftModel.from_pretrained(base_model, \"leinha/pi-defense-adapters\", subfolder=\"c3_secalign_dpo/seed_42\")"
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 123,
+      "adapter_subfolder": "c3_secalign_dpo/seed_123",
+      "code": "model = PeftModel.from_pretrained(base_model, \"leinha/pi-defense-adapters\", subfolder=\"c3_secalign_dpo/seed_123\")"
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 2026,
+      "adapter_subfolder": "c3_secalign_dpo/seed_2026",
+      "code": "model = PeftModel.from_pretrained(base_model, \"leinha/pi-defense-adapters\", subfolder=\"c3_secalign_dpo/seed_2026\")"
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 42,
+      "adapter_subfolder": "c4_ih_sft/seed_42",
+      "code": "model = PeftModel.from_pretrained(base_model, \"leinha/pi-defense-adapters\", subfolder=\"c4_ih_sft/seed_42\")"
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 123,
+      "adapter_subfolder": "c4_ih_sft/seed_123",
+      "code": "model = PeftModel.from_pretrained(base_model, \"leinha/pi-defense-adapters\", subfolder=\"c4_ih_sft/seed_123\")"
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "seed": 2026,
+      "adapter_subfolder": "c4_ih_sft/seed_2026",
+      "code": "model = PeftModel.from_pretrained(base_model, \"leinha/pi-defense-adapters\", subfolder=\"c4_ih_sft/seed_2026\")"
+    }
+  ]
+}

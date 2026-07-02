@@ -1,0 +1,9 @@
+{
+  "dataset_repo_id": "leinha/pi-defense-experiment-dataset",
+  "dry_run": false,
+  "private_repo": true,
+  "source_folders": 5,
+  "candidate_files": 22,
+  "estimated_total_size_mb": 36.66295623779297,
+  "metadata_dir": "/workspace/pi-defense-exp/exports/huggingface_dataset_upload"
+}

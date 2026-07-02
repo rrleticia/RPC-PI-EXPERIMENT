@@ -1,0 +1,9 @@
+{
+  "created_at_utc": "2026-07-02T04:04:01.651419+00:00",
+  "archive_path": "/workspace/zip_files/huggingface_upload_artifacts_full.zip",
+  "archive_size_bytes": 26968,
+  "archive_size_mb": 0.02571868896484375,
+  "files_in_archive": 24,
+  "archive_sha256": "10aff4d556c61980b68f710f490755fad633fd4b1fa7fc50a0c1ebc718fa3e51",
+  "source_export_root": "/workspace/pi-defense-exp/exports/huggingface_upload_artifacts/full"
+}

@@ -1,0 +1,156 @@
+[
+  {
+    "source_path": "/workspace/pi-defense-exp/configs/experiment.yaml",
+    "target_path": "configs/experiment.yaml",
+    "source_group": "configs",
+    "size_mb": 0.0004062652587890625,
+    "line_count": "NaN"
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/configs/training_plan.yaml",
+    "target_path": "configs/training_plan.yaml",
+    "source_group": "configs",
+    "size_mb": 0.008863449096679688,
+    "line_count": "NaN"
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/canonical/test_attacked_seen.jsonl",
+    "target_path": "data/canonical/test_attacked_seen.jsonl",
+    "source_group": "data/canonical",
+    "size_mb": 7.323574066162109,
+    "line_count": 9380.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/canonical/test_attacked_unseen.jsonl",
+    "target_path": "data/canonical/test_attacked_unseen.jsonl",
+    "source_group": "data/canonical",
+    "size_mb": 4.61890983581543,
+    "line_count": 5628.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/canonical/test_clean.jsonl",
+    "target_path": "data/canonical/test_clean.jsonl",
+    "source_group": "data/canonical",
+    "size_mb": 0.8942804336547852,
+    "line_count": 1876.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/canonical/train_attacked_seen.jsonl",
+    "target_path": "data/canonical/train_attacked_seen.jsonl",
+    "source_group": "data/canonical",
+    "size_mb": 1.6369123458862305,
+    "line_count": 2100.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/canonical/train_clean.jsonl",
+    "target_path": "data/canonical/train_clean.jsonl",
+    "source_group": "data/canonical",
+    "size_mb": 1.0007562637329102,
+    "line_count": 2100.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/canonical/validation_attacked_seen.jsonl",
+    "target_path": "data/canonical/validation_attacked_seen.jsonl",
+    "source_group": "data/canonical",
+    "size_mb": 0.2785453796386719,
+    "line_count": 350.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/canonical/validation_clean.jsonl",
+    "target_path": "data/canonical/validation_clean.jsonl",
+    "source_group": "data/canonical",
+    "size_mb": 0.17047595977783203,
+    "line_count": 350.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/views/evaluation/test_attacked_seen.jsonl",
+    "target_path": "data/views/evaluation/test_attacked_seen.jsonl",
+    "source_group": "data/views",
+    "size_mb": 7.323574066162109,
+    "line_count": 9380.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/views/evaluation/test_attacked_unseen.jsonl",
+    "target_path": "data/views/evaluation/test_attacked_unseen.jsonl",
+    "source_group": "data/views",
+    "size_mb": 4.61890983581543,
+    "line_count": 5628.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/views/evaluation/test_clean.jsonl",
+    "target_path": "data/views/evaluation/test_clean.jsonl",
+    "source_group": "data/views",
+    "size_mb": 0.8942804336547852,
+    "line_count": 1876.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/views/ih/train_sft.jsonl",
+    "target_path": "data/views/ih/train_sft.jsonl",
+    "source_group": "data/views",
+    "size_mb": 3.1715030670166016,
+    "line_count": 4200.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/views/ih/validation_sft.jsonl",
+    "target_path": "data/views/ih/validation_sft.jsonl",
+    "source_group": "data/views",
+    "size_mb": 0.5326309204101562,
+    "line_count": 700.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/views/secalign/train_dpo.jsonl",
+    "target_path": "data/views/secalign/train_dpo.jsonl",
+    "source_group": "data/views",
+    "size_mb": 1.1786794662475586,
+    "line_count": 2100.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/views/secalign/validation_dpo.jsonl",
+    "target_path": "data/views/secalign/validation_dpo.jsonl",
+    "source_group": "data/views",
+    "size_mb": 0.19849014282226562,
+    "line_count": 350.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/views/struq/train_sft.jsonl",
+    "target_path": "data/views/struq/train_sft.jsonl",
+    "source_group": "data/views",
+    "size_mb": 2.394449234008789,
+    "line_count": 4200.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/data/views/struq/validation_sft.jsonl",
+    "target_path": "data/views/struq/validation_sft.jsonl",
+    "source_group": "data/views",
+    "size_mb": 0.4031219482421875,
+    "line_count": 700.0
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/manifests/data/02_dataset_creation_manifest.json",
+    "target_path": "manifests/data/02_dataset_creation_manifest.json",
+    "source_group": "manifests/data",
+    "size_mb": 0.004559516906738281,
+    "line_count": "NaN"
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/manifests/data/02_dataset_creation_manifest.md",
+    "target_path": "manifests/data/02_dataset_creation_manifest.md",
+    "source_group": "manifests/data",
+    "size_mb": 0.0030088424682617188,
+    "line_count": "NaN"
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/manifests/environment/01_environment_setup_manifest.json",
+    "target_path": "manifests/environment/01_environment_setup_manifest.json",
+    "source_group": "manifests/environment",
+    "size_mb": 0.004973411560058594,
+    "line_count": "NaN"
+  },
+  {
+    "source_path": "/workspace/pi-defense-exp/manifests/environment/01_environment_setup_manifest.md",
+    "target_path": "manifests/environment/01_environment_setup_manifest.md",
+    "source_group": "manifests/environment",
+    "size_mb": 0.0020513534545898438,
+    "line_count": "NaN"
+  }
+]

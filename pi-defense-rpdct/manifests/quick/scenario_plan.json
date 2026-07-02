@@ -1,0 +1,37 @@
+[
+  {
+    "scenario_id": "c0_base",
+    "label": "C0 — Base model",
+    "uses_adapter": false,
+    "prompt_strategy": "plain",
+    "adapter_path": "NaN"
+  },
+  {
+    "scenario_id": "c1_struq_format_only",
+    "label": "C1 — StruQ format-only",
+    "uses_adapter": false,
+    "prompt_strategy": "struq",
+    "adapter_path": "NaN"
+  },
+  {
+    "scenario_id": "c2_struq_sft",
+    "label": "C2 — StruQ-like SFT",
+    "uses_adapter": true,
+    "prompt_strategy": "struq",
+    "adapter_path": "/workspace/pi-defense-rpdct/adapter_cache/models--leinha--pi-defense-adapters/snapshots/310f3371e7a0b20050a06751db7065dfe6989860/c2_struq_sft/seed_42"
+  },
+  {
+    "scenario_id": "c3_secalign_dpo",
+    "label": "C3 — SecAlign-like DPO",
+    "uses_adapter": true,
+    "prompt_strategy": "secalign",
+    "adapter_path": "/workspace/pi-defense-rpdct/adapter_cache/models--leinha--pi-defense-adapters/snapshots/310f3371e7a0b20050a06751db7065dfe6989860/c3_secalign_dpo/seed_42"
+  },
+  {
+    "scenario_id": "c4_ih_sft",
+    "label": "C4 — Instruction-Hierarchy-like SFT",
+    "uses_adapter": true,
+    "prompt_strategy": "ih",
+    "adapter_path": "/workspace/pi-defense-rpdct/adapter_cache/models--leinha--pi-defense-adapters/snapshots/310f3371e7a0b20050a06751db7065dfe6989860/c4_ih_sft/seed_42"
+  }
+]

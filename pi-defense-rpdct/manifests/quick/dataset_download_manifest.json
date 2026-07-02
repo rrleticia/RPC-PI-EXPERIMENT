@@ -1,0 +1,13 @@
+{
+  "dataset_repo_id": "leinha/pi-defense-experiment-dataset",
+  "remote_paths": {
+    "test_clean": "data/views/evaluation/test_clean.jsonl",
+    "test_attacked_seen": "data/views/evaluation/test_attacked_seen.jsonl",
+    "test_attacked_unseen": "data/views/evaluation/test_attacked_unseen.jsonl"
+  },
+  "local_paths": {
+    "test_clean": "/workspace/pi-defense-rpdct/hf_cache/datasets--leinha--pi-defense-experiment-dataset/snapshots/04dd33945a15e4fc0d2441c1f8d3035867c6f125/data/views/evaluation/test_clean.jsonl",
+    "test_attacked_seen": "/workspace/pi-defense-rpdct/hf_cache/datasets--leinha--pi-defense-experiment-dataset/snapshots/04dd33945a15e4fc0d2441c1f8d3035867c6f125/data/views/evaluation/test_attacked_seen.jsonl",
+    "test_attacked_unseen": "/workspace/pi-defense-rpdct/hf_cache/datasets--leinha--pi-defense-experiment-dataset/snapshots/04dd33945a15e4fc0d2441c1f8d3035867c6f125/data/views/evaluation/test_attacked_unseen.jsonl"
+  }
+}

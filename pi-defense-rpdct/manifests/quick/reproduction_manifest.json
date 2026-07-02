@@ -1,0 +1,98 @@
+{
+  "notebook": "01_reproduce_from_huggingface",
+  "created_at_utc": "2026-07-02T14:24:06.932452+00:00",
+  "project_root": "/workspace/pi-defense-rpdct",
+  "rpdct_root": "/workspace/pi-defense-rpdct",
+  "notebook_dir": "/workspace/pi-defense-rpdct/notebook",
+  "venv_dir": "/workspace/pi-defense-rpdct/.venv",
+  "requirements_rpdct": "/workspace/pi-defense-rpdct/requirements-rpdct.txt",
+  "run_mode": "quick",
+  "hf_adapter_repo_id": "leinha/pi-defense-adapters",
+  "hf_dataset_repo_id": "leinha/pi-defense-experiment-dataset",
+  "base_model_id": "meta-llama/Llama-3.1-8B-Instruct",
+  "judge_model_id": "Qwen/Qwen3-8B",
+  "sample_size_per_split": 20,
+  "reproduction_seeds": [
+    42
+  ],
+  "dataset_files": {
+    "test_clean": {
+      "remote_path": "data/views/evaluation/test_clean.jsonl",
+      "local_path": "/workspace/pi-defense-rpdct/hf_cache/datasets--leinha--pi-defense-experiment-dataset/snapshots/04dd33945a15e4fc0d2441c1f8d3035867c6f125/data/views/evaluation/test_clean.jsonl",
+      "sample_path": "/workspace/pi-defense-rpdct/data/samples/test_clean_20.jsonl",
+      "source_rows": 1876,
+      "sample_rows": 20
+    },
+    "test_attacked_seen": {
+      "remote_path": "data/views/evaluation/test_attacked_seen.jsonl",
+      "local_path": "/workspace/pi-defense-rpdct/hf_cache/datasets--leinha--pi-defense-experiment-dataset/snapshots/04dd33945a15e4fc0d2441c1f8d3035867c6f125/data/views/evaluation/test_attacked_seen.jsonl",
+      "sample_path": "/workspace/pi-defense-rpdct/data/samples/test_attacked_seen_20.jsonl",
+      "source_rows": 9380,
+      "sample_rows": 20
+    },
+    "test_attacked_unseen": {
+      "remote_path": "data/views/evaluation/test_attacked_unseen.jsonl",
+      "local_path": "/workspace/pi-defense-rpdct/hf_cache/datasets--leinha--pi-defense-experiment-dataset/snapshots/04dd33945a15e4fc0d2441c1f8d3035867c6f125/data/views/evaluation/test_attacked_unseen.jsonl",
+      "sample_path": "/workspace/pi-defense-rpdct/data/samples/test_attacked_unseen_20.jsonl",
+      "source_rows": 5628,
+      "sample_rows": 20
+    }
+  },
+  "adapter_snapshot_path": "/workspace/pi-defense-rpdct/adapter_cache/models--leinha--pi-defense-adapters/snapshots/310f3371e7a0b20050a06751db7065dfe6989860",
+  "adapter_paths": {
+    "c2_struq_sft": "/workspace/pi-defense-rpdct/adapter_cache/models--leinha--pi-defense-adapters/snapshots/310f3371e7a0b20050a06751db7065dfe6989860/c2_struq_sft/seed_42",
+    "c3_secalign_dpo": "/workspace/pi-defense-rpdct/adapter_cache/models--leinha--pi-defense-adapters/snapshots/310f3371e7a0b20050a06751db7065dfe6989860/c3_secalign_dpo/seed_42",
+    "c4_ih_sft": "/workspace/pi-defense-rpdct/adapter_cache/models--leinha--pi-defense-adapters/snapshots/310f3371e7a0b20050a06751db7065dfe6989860/c4_ih_sft/seed_42"
+  },
+  "scenario_plan": {
+    "c0_base": {
+      "label": "C0 — Base model",
+      "uses_adapter": false,
+      "adapter_path": null,
+      "prompt_strategy": "plain",
+      "seed": 42
+    },
+    "c1_struq_format_only": {
+      "label": "C1 — StruQ format-only",
+      "uses_adapter": false,
+      "adapter_path": null,
+      "prompt_strategy": "struq",
+      "seed": 42
+    },
+    "c2_struq_sft": {
+      "label": "C2 — StruQ-like SFT",
+      "uses_adapter": true,
+      "adapter_path": "/workspace/pi-defense-rpdct/adapter_cache/models--leinha--pi-defense-adapters/snapshots/310f3371e7a0b20050a06751db7065dfe6989860/c2_struq_sft/seed_42",
+      "prompt_strategy": "struq",
+      "seed": 42
+    },
+    "c3_secalign_dpo": {
+      "label": "C3 — SecAlign-like DPO",
+      "uses_adapter": true,
+      "adapter_path": "/workspace/pi-defense-rpdct/adapter_cache/models--leinha--pi-defense-adapters/snapshots/310f3371e7a0b20050a06751db7065dfe6989860/c3_secalign_dpo/seed_42",
+      "prompt_strategy": "secalign",
+      "seed": 42
+    },
+    "c4_ih_sft": {
+      "label": "C4 — Instruction-Hierarchy-like SFT",
+      "uses_adapter": true,
+      "adapter_path": "/workspace/pi-defense-rpdct/adapter_cache/models--leinha--pi-defense-adapters/snapshots/310f3371e7a0b20050a06751db7065dfe6989860/c4_ih_sft/seed_42",
+      "prompt_strategy": "ih",
+      "seed": 42
+    }
+  },
+  "outputs": {
+    "inference_results_dir": "/workspace/pi-defense-rpdct/results/quick/inference",
+    "quick_metrics_csv": "/workspace/pi-defense-rpdct/results/quick/quick_metrics.csv",
+    "win_rate_judgments_jsonl": "/workspace/pi-defense-rpdct/results/quick/win_rate_judgments.jsonl",
+    "win_rate_summary_csv": "/workspace/pi-defense-rpdct/results/quick/win_rate_summary.csv",
+    "reproduction_summary_csv": "/workspace/pi-defense-rpdct/results/quick/reproduction_summary.csv",
+    "events_log": "/workspace/pi-defense-rpdct/logs/quick/01_reproduce_from_huggingface_events.jsonl"
+  },
+  "notes": [
+    "This is a quick reproduction smoke test, not the full experiment.",
+    "Only seed_42 is used by default.",
+    "Only a small sample is evaluated by default.",
+    "Win Rate is estimated using Qwen/Qwen3-8B as an open-source judge."
+  ]
+}

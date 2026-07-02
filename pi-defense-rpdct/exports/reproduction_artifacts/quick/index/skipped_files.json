@@ -1,0 +1,27 @@
+[
+  {
+    "group": "notebooks",
+    "path": "/workspace/pi-defense-rpdct/notebook/.ipynb_checkpoints/01_reproduce_from_huggingface_rpdct_venv-checkpoint.ipynb",
+    "reason": "jupyter_checkpoint"
+  },
+  {
+    "group": "notebooks",
+    "path": "/workspace/pi-defense-rpdct/notebook/.ipynb_checkpoints/02_export_reproduction_artifacts-checkpoint.ipynb",
+    "reason": "jupyter_checkpoint"
+  },
+  {
+    "group": "hf_cache",
+    "path": "/workspace/pi-defense-rpdct/hf_cache",
+    "reason": "HF cache is intentionally excluded to avoid exporting large downloaded snapshots."
+  },
+  {
+    "group": "adapter_cache",
+    "path": "/workspace/pi-defense-rpdct/adapter_cache",
+    "reason": "Adapter cache is intentionally excluded because adapters can be re-downloaded from Hugging Face."
+  },
+  {
+    "group": "venv",
+    "path": "/workspace/pi-defense-rpdct/.venv",
+    "reason": "Virtual environments are not portable and should not be exported."
+  }
+]

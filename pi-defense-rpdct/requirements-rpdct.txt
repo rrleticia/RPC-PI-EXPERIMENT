@@ -1,0 +1,12 @@
+accelerate
+bitsandbytes
+datasets
+huggingface-hub
+ipykernel
+numpy
+pandas
+peft
+safetensors
+sentencepiece
+tqdm
+transformers

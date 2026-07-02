@@ -1,0 +1,9 @@
+{
+  "adapter_repo_id": "leinha/pi-defense-adapters",
+  "snapshot_path": "/workspace/pi-defense-rpdct/adapter_cache/models--leinha--pi-defense-adapters/snapshots/310f3371e7a0b20050a06751db7065dfe6989860",
+  "adapter_paths": {
+    "c2_struq_sft": "/workspace/pi-defense-rpdct/adapter_cache/models--leinha--pi-defense-adapters/snapshots/310f3371e7a0b20050a06751db7065dfe6989860/c2_struq_sft/seed_42",
+    "c3_secalign_dpo": "/workspace/pi-defense-rpdct/adapter_cache/models--leinha--pi-defense-adapters/snapshots/310f3371e7a0b20050a06751db7065dfe6989860/c3_secalign_dpo/seed_42",
+    "c4_ih_sft": "/workspace/pi-defense-rpdct/adapter_cache/models--leinha--pi-defense-adapters/snapshots/310f3371e7a0b20050a06751db7065dfe6989860/c4_ih_sft/seed_42"
+  }
+}

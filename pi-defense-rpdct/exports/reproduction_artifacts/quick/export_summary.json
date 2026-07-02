@@ -1,0 +1,21 @@
+{
+  "export_name": "pi-defense-rpdct reproduction artifacts",
+  "created_at_utc": "2026-07-02T15:26:44.913544+00:00",
+  "rpdct_root": "/workspace/pi-defense-rpdct",
+  "run_mode": "quick",
+  "export_root": "/workspace/pi-defense-rpdct/exports/reproduction_artifacts/quick",
+  "zip_files_dir": "/workspace/zip_files",
+  "archive_path": "/workspace/zip_files/pi_defense_rpdct_artifacts_quick.zip",
+  "export_mode": "zip_from_sources_no_intermediate_copy",
+  "selected_files": 36,
+  "selected_size_bytes": 1170645,
+  "selected_size_mb": 1.1164140701293945,
+  "missing_optional_sources": 0,
+  "skipped_files_or_sources": 5,
+  "policy": {
+    "export_hf_cache": false,
+    "export_adapter_cache": false,
+    "export_venv": false,
+    "max_file_size_mb": 1024
+  }
+}

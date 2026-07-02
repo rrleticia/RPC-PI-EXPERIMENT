@@ -1,0 +1,20 @@
+{
+  "test_clean": {
+    "source_path": "/workspace/pi-defense-rpdct/hf_cache/datasets--leinha--pi-defense-experiment-dataset/snapshots/04dd33945a15e4fc0d2441c1f8d3035867c6f125/data/views/evaluation/test_clean.jsonl",
+    "sample_path": "/workspace/pi-defense-rpdct/data/samples/test_clean_20.jsonl",
+    "source_rows": 1876,
+    "sample_rows": 20
+  },
+  "test_attacked_seen": {
+    "source_path": "/workspace/pi-defense-rpdct/hf_cache/datasets--leinha--pi-defense-experiment-dataset/snapshots/04dd33945a15e4fc0d2441c1f8d3035867c6f125/data/views/evaluation/test_attacked_seen.jsonl",
+    "sample_path": "/workspace/pi-defense-rpdct/data/samples/test_attacked_seen_20.jsonl",
+    "source_rows": 9380,
+    "sample_rows": 20
+  },
+  "test_attacked_unseen": {
+    "source_path": "/workspace/pi-defense-rpdct/hf_cache/datasets--leinha--pi-defense-experiment-dataset/snapshots/04dd33945a15e4fc0d2441c1f8d3035867c6f125/data/views/evaluation/test_attacked_unseen.jsonl",
+    "sample_path": "/workspace/pi-defense-rpdct/data/samples/test_attacked_unseen_20.jsonl",
+    "source_rows": 5628,
+    "sample_rows": 20
+  }
+}

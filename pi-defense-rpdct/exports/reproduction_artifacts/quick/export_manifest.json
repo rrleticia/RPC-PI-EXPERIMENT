@@ -1,0 +1,369 @@
+{
+  "notebook": "02_export_reproduction_artifacts",
+  "created_at_utc": "2026-07-02T15:26:44.913544+00:00",
+  "summary": {
+    "export_name": "pi-defense-rpdct reproduction artifacts",
+    "created_at_utc": "2026-07-02T15:26:44.913544+00:00",
+    "rpdct_root": "/workspace/pi-defense-rpdct",
+    "run_mode": "quick",
+    "export_root": "/workspace/pi-defense-rpdct/exports/reproduction_artifacts/quick",
+    "zip_files_dir": "/workspace/zip_files",
+    "archive_path": "/workspace/zip_files/pi_defense_rpdct_artifacts_quick.zip",
+    "export_mode": "zip_from_sources_no_intermediate_copy",
+    "selected_files": 36,
+    "selected_size_bytes": 1170645,
+    "selected_size_mb": 1.1164140701293945,
+    "missing_optional_sources": 0,
+    "skipped_files_or_sources": 5,
+    "policy": {
+      "export_hf_cache": false,
+      "export_adapter_cache": false,
+      "export_venv": false,
+      "max_file_size_mb": 1024
+    }
+  },
+  "source_specs": [
+    {
+      "group": "requirements",
+      "source": "/workspace/pi-defense-rpdct/requirements-rpdct.txt",
+      "archive_root": "pi-defense-rpdct/requirements-rpdct.txt",
+      "required": false
+    },
+    {
+      "group": "notebooks",
+      "source": "/workspace/pi-defense-rpdct/notebook",
+      "archive_root": "pi-defense-rpdct/notebook",
+      "required": true
+    },
+    {
+      "group": "sample_data",
+      "source": "/workspace/pi-defense-rpdct/data/samples",
+      "archive_root": "pi-defense-rpdct/data/samples",
+      "required": false
+    },
+    {
+      "group": "results",
+      "source": "/workspace/pi-defense-rpdct/results/quick",
+      "archive_root": "pi-defense-rpdct/results/quick",
+      "required": false
+    },
+    {
+      "group": "logs",
+      "source": "/workspace/pi-defense-rpdct/logs/quick",
+      "archive_root": "pi-defense-rpdct/logs/quick",
+      "required": false
+    },
+    {
+      "group": "manifests",
+      "source": "/workspace/pi-defense-rpdct/manifests/quick",
+      "archive_root": "pi-defense-rpdct/manifests/quick",
+      "required": false
+    },
+    {
+      "group": "hf_cache",
+      "source": "/workspace/pi-defense-rpdct/hf_cache",
+      "archive_root": "pi-defense-rpdct/hf_cache",
+      "required": false,
+      "disabled_by_policy": true,
+      "policy_reason": "HF cache is intentionally excluded to avoid exporting large downloaded snapshots."
+    },
+    {
+      "group": "adapter_cache",
+      "source": "/workspace/pi-defense-rpdct/adapter_cache",
+      "archive_root": "pi-defense-rpdct/adapter_cache",
+      "required": false,
+      "disabled_by_policy": true,
+      "policy_reason": "Adapter cache is intentionally excluded because adapters can be re-downloaded from Hugging Face."
+    },
+    {
+      "group": "venv",
+      "source": "/workspace/pi-defense-rpdct/.venv",
+      "archive_root": "pi-defense-rpdct/.venv",
+      "required": false,
+      "disabled_by_policy": true,
+      "policy_reason": "Virtual environments are not portable and should not be exported."
+    }
+  ],
+  "files": [
+    {
+      "group": "requirements",
+      "source_path": "/workspace/pi-defense-rpdct/requirements-rpdct.txt",
+      "archive_path": "pi-defense-rpdct/requirements-rpdct.txt",
+      "size_bytes": 121,
+      "size_mb": 0.00011539459228515625
+    },
+    {
+      "group": "notebooks",
+      "source_path": "/workspace/pi-defense-rpdct/notebook/01_reproduce_from_huggingface_rpdct_venv.ipynb",
+      "archive_path": "pi-defense-rpdct/notebook/01_reproduce_from_huggingface_rpdct_venv.ipynb",
+      "size_bytes": 136900,
+      "size_mb": 0.13055801391601562
+    },
+    {
+      "group": "notebooks",
+      "source_path": "/workspace/pi-defense-rpdct/notebook/02_export_reproduction_artifacts.ipynb",
+      "archive_path": "pi-defense-rpdct/notebook/02_export_reproduction_artifacts.ipynb",
+      "size_bytes": 31078,
+      "size_mb": 0.029638290405273438
+    },
+    {
+      "group": "sample_data",
+      "source_path": "/workspace/pi-defense-rpdct/data/samples/test_attacked_seen_20.jsonl",
+      "archive_path": "pi-defense-rpdct/data/samples/test_attacked_seen_20.jsonl",
+      "size_bytes": 15704,
+      "size_mb": 0.01497650146484375
+    },
+    {
+      "group": "sample_data",
+      "source_path": "/workspace/pi-defense-rpdct/data/samples/test_attacked_unseen_20.jsonl",
+      "archive_path": "pi-defense-rpdct/data/samples/test_attacked_unseen_20.jsonl",
+      "size_bytes": 16976,
+      "size_mb": 0.0161895751953125
+    },
+    {
+      "group": "sample_data",
+      "source_path": "/workspace/pi-defense-rpdct/data/samples/test_clean_20.jsonl",
+      "archive_path": "pi-defense-rpdct/data/samples/test_clean_20.jsonl",
+      "size_bytes": 10539,
+      "size_mb": 0.010050773620605469
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c0_base/seed_42/test_attacked_seen.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c0_base/seed_42/test_attacked_seen.jsonl",
+      "size_bytes": 23174,
+      "size_mb": 0.022100448608398438
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c0_base/seed_42/test_attacked_unseen.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c0_base/seed_42/test_attacked_unseen.jsonl",
+      "size_bytes": 24207,
+      "size_mb": 0.023085594177246094
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c0_base/seed_42/test_clean.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c0_base/seed_42/test_clean.jsonl",
+      "size_bytes": 22046,
+      "size_mb": 0.021024703979492188
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c1_struq_format_only/seed_42/test_attacked_seen.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c1_struq_format_only/seed_42/test_attacked_seen.jsonl",
+      "size_bytes": 25086,
+      "size_mb": 0.023923873901367188
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c1_struq_format_only/seed_42/test_attacked_unseen.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c1_struq_format_only/seed_42/test_attacked_unseen.jsonl",
+      "size_bytes": 26115,
+      "size_mb": 0.02490520477294922
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c1_struq_format_only/seed_42/test_clean.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c1_struq_format_only/seed_42/test_clean.jsonl",
+      "size_bytes": 23955,
+      "size_mb": 0.02284526824951172
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c2_struq_sft/seed_42/test_attacked_seen.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c2_struq_sft/seed_42/test_attacked_seen.jsonl",
+      "size_bytes": 27792,
+      "size_mb": 0.0265045166015625
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c2_struq_sft/seed_42/test_attacked_unseen.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c2_struq_sft/seed_42/test_attacked_unseen.jsonl",
+      "size_bytes": 28849,
+      "size_mb": 0.027512550354003906
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c2_struq_sft/seed_42/test_clean.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c2_struq_sft/seed_42/test_clean.jsonl",
+      "size_bytes": 26693,
+      "size_mb": 0.02545642852783203
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c3_secalign_dpo/seed_42/test_attacked_seen.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c3_secalign_dpo/seed_42/test_attacked_seen.jsonl",
+      "size_bytes": 26741,
+      "size_mb": 0.02550220489501953
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c3_secalign_dpo/seed_42/test_attacked_unseen.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c3_secalign_dpo/seed_42/test_attacked_unseen.jsonl",
+      "size_bytes": 27802,
+      "size_mb": 0.026514053344726562
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c3_secalign_dpo/seed_42/test_clean.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c3_secalign_dpo/seed_42/test_clean.jsonl",
+      "size_bytes": 25624,
+      "size_mb": 0.02443695068359375
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c4_ih_sft/seed_42/test_attacked_seen.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c4_ih_sft/seed_42/test_attacked_seen.jsonl",
+      "size_bytes": 30192,
+      "size_mb": 0.0287933349609375
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c4_ih_sft/seed_42/test_attacked_unseen.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c4_ih_sft/seed_42/test_attacked_unseen.jsonl",
+      "size_bytes": 31249,
+      "size_mb": 0.029801368713378906
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/inference/c4_ih_sft/seed_42/test_clean.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/inference/c4_ih_sft/seed_42/test_clean.jsonl",
+      "size_bytes": 29093,
+      "size_mb": 0.02774524688720703
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/pairwise_inputs.csv",
+      "archive_path": "pi-defense-rpdct/results/quick/pairwise_inputs.csv",
+      "size_bytes": 393025,
+      "size_mb": 0.3748178482055664
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/quick_metrics.csv",
+      "archive_path": "pi-defense-rpdct/results/quick/quick_metrics.csv",
+      "size_bytes": 613,
+      "size_mb": 0.0005846023559570312
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/quick_metrics.json",
+      "archive_path": "pi-defense-rpdct/results/quick/quick_metrics.json",
+      "size_bytes": 1787,
+      "size_mb": 0.0017042160034179688
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/reproduction_summary.csv",
+      "archive_path": "pi-defense-rpdct/results/quick/reproduction_summary.csv",
+      "size_bytes": 935,
+      "size_mb": 0.0008916854858398438
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/reproduction_summary.json",
+      "archive_path": "pi-defense-rpdct/results/quick/reproduction_summary.json",
+      "size_bytes": 2554,
+      "size_mb": 0.0024356842041015625
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/win_rate_judgments.jsonl",
+      "archive_path": "pi-defense-rpdct/results/quick/win_rate_judgments.jsonl",
+      "size_bytes": 128970,
+      "size_mb": 0.12299537658691406
+    },
+    {
+      "group": "results",
+      "source_path": "/workspace/pi-defense-rpdct/results/quick/win_rate_summary.csv",
+      "archive_path": "pi-defense-rpdct/results/quick/win_rate_summary.csv",
+      "size_bytes": 1110,
+      "size_mb": 0.0010585784912109375
+    },
+    {
+      "group": "logs",
+      "source_path": "/workspace/pi-defense-rpdct/logs/quick/01_reproduce_from_huggingface_events.jsonl",
+      "archive_path": "pi-defense-rpdct/logs/quick/01_reproduce_from_huggingface_events.jsonl",
+      "size_bytes": 16992,
+      "size_mb": 0.016204833984375
+    },
+    {
+      "group": "manifests",
+      "source_path": "/workspace/pi-defense-rpdct/manifests/quick/adapter_download_manifest.json",
+      "archive_path": "pi-defense-rpdct/manifests/quick/adapter_download_manifest.json",
+      "size_bytes": 748,
+      "size_mb": 0.000713348388671875
+    },
+    {
+      "group": "manifests",
+      "source_path": "/workspace/pi-defense-rpdct/manifests/quick/dataset_download_manifest.json",
+      "archive_path": "pi-defense-rpdct/manifests/quick/dataset_download_manifest.json",
+      "size_bytes": 950,
+      "size_mb": 0.0009059906005859375
+    },
+    {
+      "group": "manifests",
+      "source_path": "/workspace/pi-defense-rpdct/manifests/quick/inference_records.json",
+      "archive_path": "pi-defense-rpdct/manifests/quick/inference_records.json",
+      "size_bytes": 4426,
+      "size_mb": 0.0042209625244140625
+    },
+    {
+      "group": "manifests",
+      "source_path": "/workspace/pi-defense-rpdct/manifests/quick/reproduction_manifest.json",
+      "archive_path": "pi-defense-rpdct/manifests/quick/reproduction_manifest.json",
+      "size_bytes": 4979,
+      "size_mb": 0.004748344421386719
+    },
+    {
+      "group": "manifests",
+      "source_path": "/workspace/pi-defense-rpdct/manifests/quick/reproduction_manifest.md",
+      "archive_path": "pi-defense-rpdct/manifests/quick/reproduction_manifest.md",
+      "size_bytes": 1221,
+      "size_mb": 0.0011644363403320312
+    },
+    {
+      "group": "manifests",
+      "source_path": "/workspace/pi-defense-rpdct/manifests/quick/sample_views_manifest.json",
+      "archive_path": "pi-defense-rpdct/manifests/quick/sample_views_manifest.json",
+      "size_bytes": 1106,
+      "size_mb": 0.0010547637939453125
+    },
+    {
+      "group": "manifests",
+      "source_path": "/workspace/pi-defense-rpdct/manifests/quick/scenario_plan.json",
+      "archive_path": "pi-defense-rpdct/manifests/quick/scenario_plan.json",
+      "size_bytes": 1293,
+      "size_mb": 0.0012331008911132812
+    }
+  ],
+  "missing_optional_sources": [],
+  "skipped_files": [
+    {
+      "group": "notebooks",
+      "path": "/workspace/pi-defense-rpdct/notebook/.ipynb_checkpoints/01_reproduce_from_huggingface_rpdct_venv-checkpoint.ipynb",
+      "reason": "jupyter_checkpoint"
+    },
+    {
+      "group": "notebooks",
+      "path": "/workspace/pi-defense-rpdct/notebook/.ipynb_checkpoints/02_export_reproduction_artifacts-checkpoint.ipynb",
+      "reason": "jupyter_checkpoint"
+    },
+    {
+      "group": "hf_cache",
+      "path": "/workspace/pi-defense-rpdct/hf_cache",
+      "reason": "HF cache is intentionally excluded to avoid exporting large downloaded snapshots."
+    },
+    {
+      "group": "adapter_cache",
+      "path": "/workspace/pi-defense-rpdct/adapter_cache",
+      "reason": "Adapter cache is intentionally excluded because adapters can be re-downloaded from Hugging Face."
+    },
+    {
+      "group": "venv",
+      "path": "/workspace/pi-defense-rpdct/.venv",
+      "reason": "Virtual environments are not portable and should not be exported."
+    }
+  ]
+}

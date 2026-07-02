@@ -1,0 +1,137 @@
+[
+  {
+    "scenario_id": "c0_base",
+    "seed": 42,
+    "eval_split": "test_clean",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c0_base/seed_42/test_clean.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 2.0342535972595215,
+    "status": "generated"
+  },
+  {
+    "scenario_id": "c0_base",
+    "seed": 42,
+    "eval_split": "test_attacked_seen",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c0_base/seed_42/test_attacked_seen.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 1.6179239749908447,
+    "status": "generated"
+  },
+  {
+    "scenario_id": "c0_base",
+    "seed": 42,
+    "eval_split": "test_attacked_unseen",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c0_base/seed_42/test_attacked_unseen.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 1.5756397247314453,
+    "status": "generated"
+  },
+  {
+    "scenario_id": "c1_struq_format_only",
+    "seed": 42,
+    "eval_split": "test_clean",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c1_struq_format_only/seed_42/test_clean.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 1.6181375980377197,
+    "status": "generated"
+  },
+  {
+    "scenario_id": "c1_struq_format_only",
+    "seed": 42,
+    "eval_split": "test_attacked_seen",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c1_struq_format_only/seed_42/test_attacked_seen.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 1.6137633323669434,
+    "status": "generated"
+  },
+  {
+    "scenario_id": "c1_struq_format_only",
+    "seed": 42,
+    "eval_split": "test_attacked_unseen",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c1_struq_format_only/seed_42/test_attacked_unseen.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 1.6130640506744385,
+    "status": "generated"
+  },
+  {
+    "scenario_id": "c2_struq_sft",
+    "seed": 42,
+    "eval_split": "test_clean",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c2_struq_sft/seed_42/test_clean.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 2.712527275085449,
+    "status": "generated"
+  },
+  {
+    "scenario_id": "c2_struq_sft",
+    "seed": 42,
+    "eval_split": "test_attacked_seen",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c2_struq_sft/seed_42/test_attacked_seen.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 2.462341070175171,
+    "status": "generated"
+  },
+  {
+    "scenario_id": "c2_struq_sft",
+    "seed": 42,
+    "eval_split": "test_attacked_unseen",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c2_struq_sft/seed_42/test_attacked_unseen.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 2.5807688236236572,
+    "status": "generated"
+  },
+  {
+    "scenario_id": "c3_secalign_dpo",
+    "seed": 42,
+    "eval_split": "test_clean",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c3_secalign_dpo/seed_42/test_clean.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 2.6384708881378174,
+    "status": "generated"
+  },
+  {
+    "scenario_id": "c3_secalign_dpo",
+    "seed": 42,
+    "eval_split": "test_attacked_seen",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c3_secalign_dpo/seed_42/test_attacked_seen.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 2.5295276641845703,
+    "status": "generated"
+  },
+  {
+    "scenario_id": "c3_secalign_dpo",
+    "seed": 42,
+    "eval_split": "test_attacked_unseen",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c3_secalign_dpo/seed_42/test_attacked_unseen.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 2.731023073196411,
+    "status": "generated"
+  },
+  {
+    "scenario_id": "c4_ih_sft",
+    "seed": 42,
+    "eval_split": "test_clean",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c4_ih_sft/seed_42/test_clean.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 2.7496485710144043,
+    "status": "generated"
+  },
+  {
+    "scenario_id": "c4_ih_sft",
+    "seed": 42,
+    "eval_split": "test_attacked_seen",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c4_ih_sft/seed_42/test_attacked_seen.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 2.433976173400879,
+    "status": "generated"
+  },
+  {
+    "scenario_id": "c4_ih_sft",
+    "seed": 42,
+    "eval_split": "test_attacked_unseen",
+    "path": "/workspace/pi-defense-rpdct/results/quick/inference/c4_ih_sft/seed_42/test_attacked_unseen.jsonl",
+    "rows": 20,
+    "elapsed_seconds": 2.5752968788146973,
+    "status": "generated"
+  }
+]

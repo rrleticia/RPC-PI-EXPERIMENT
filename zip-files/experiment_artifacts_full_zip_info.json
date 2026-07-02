@@ -1,0 +1,12 @@
+{
+  "archive_path": "/workspace/zip_files/experiment_artifacts_full.zip",
+  "archive_name": "experiment_artifacts_full.zip",
+  "created_at_utc": "2026-06-30T16:08:37.215563+00:00",
+  "started_at_utc": "2026-06-30T16:03:11.426190+00:00",
+  "elapsed_seconds": 325.7893223762512,
+  "compression_level": 6,
+  "files_in_archive": 611,
+  "source_total_size_mb": 6189.293192863464,
+  "archive_size_mb": 3976.272705078125,
+  "sha256": "281dc2520f77711b9fb2e9a6182abe3eb952fd88fa9b2822693eaaf1ad3919ad"
+}

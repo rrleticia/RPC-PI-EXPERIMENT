@@ -1,0 +1,1424 @@
+---
+title: "RPC-PI Experiment - Stratified Sampling Analysis"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6,
+  dpi = 300
+)
+
+options(knitr.kable.NA = "-")
+
+required_packages <- c(
+  "tidyverse",
+  "readr",
+  "ggplot2",
+  "scales",
+  "stringr",
+  "forcats",
+  "fs",
+  "here",
+  "knitr"
+)
+
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(scales)
+library(stringr)
+library(forcats)
+library(fs)
+library(here)
+library(knitr)
+```
+
+# Objective
+
+This R Markdown performs a **stratified subsampling analysis**.
+
+The idea is to pool the available seed outputs within each scenario, repeatedly draw stratified samples of size 30, recompute metrics on each sample, and inspect the empirical distribution of those sample-level metrics.
+
+This answers a stability question:
+
+```text
+If we repeatedly evaluate balanced subsets of 30 examples, do the scenario-level conclusions remain stable?
+```
+
+It should not be interpreted as proof that individual examples are normally distributed. The raw example-level variables are binary or categorical. The approximately continuous objects here are the **sample means** computed over repeated stratified samples.
+
+# Sampling design
+
+For each scenario and split, this report draws repeated samples of size 30.
+
+Default settings:
+
+```text
+sample size = 30
+number of repeated samples = 500
+sampling is with replacement inside strata
+strata include seed, task_name, and attack_type when applicable
+```
+
+For clean examples, the default strata are:
+
+```text
+seed + task_name
+```
+
+For attacked examples, the default strata are:
+
+```text
+seed + task_name + attack_type
+```
+
+The report computes metrics such as:
+
+```text
+clean_accuracy
+robust_accuracy
+ASV / attack success rate
+invalid_output_rate
+normalized_output_entropy
+normalized_output_majority_share
+```
+
+# Paths and configuration
+
+```{r paths-and-config}
+DATA_DIR <- here::here("data", "results")
+DESC_DIR <- here::here("tables", "descriptive")
+
+OUT_TABLE_DIR <- here::here("tables", "stratified_sampling_analysis")
+OUT_FIG_DIR <- here::here("figures", "stratified_sampling_analysis")
+
+fs::dir_create(OUT_TABLE_DIR)
+fs::dir_create(OUT_FIG_DIR)
+
+if (!dir.exists(DATA_DIR)) {
+  stop(
+    "Could not find data/results/. Extract the ZIP first with: ",
+    "unzip('results.zip', exdir = 'data')"
+  )
+}
+
+SAMPLE_SIZE <- 30
+N_RESAMPLES <- 500
+SAMPLING_SEED <- 42
+
+# Options:
+# "proportional" keeps strata represented in proportion to their observed size.
+# "balanced" gives each stratum equal probability, which can be useful when some tasks/attacks dominate.
+STRATUM_ALLOCATION <- "proportional"
+
+# If TRUE, seed is part of the stratum definition.
+# This helps avoid one seed dominating pooled samples for C2/C3/C4.
+STRATIFY_BY_SEED <- TRUE
+
+set.seed(SAMPLING_SEED)
+```
+
+# Helper functions
+
+```{r helpers}
+read_first_existing <- function(paths, required = TRUE) {
+  existing <- paths[file.exists(paths)]
+
+  if (length(existing) == 0) {
+    if (required) {
+      stop("None of these files were found:\n", paste(paths, collapse = "\n"))
+    }
+    return(NULL)
+  }
+
+  readr::read_csv(existing[[1]], show_col_types = FALSE)
+}
+
+scenario_order <- c(
+  "c0_base",
+  "c1_struq_format_only",
+  "c2_struq_sft",
+  "c3_secalign_dpo",
+  "c4_ih_sft"
+)
+
+scenario_labels <- tibble(
+  scenario_id = scenario_order,
+  scenario_short = c("C0", "C1", "C2", "C3", "C4"),
+  scenario_label = c(
+    "C0 - Base model",
+    "C1 - StruQ format-only",
+    "C2 - StruQ-like SFT",
+    "C3 - SecAlign-like DPO",
+    "C4 - Instruction-Hierarchy-like SFT"
+  )
+)
+
+scenario_palette <- c(
+  C0 = "#7F7F7F",
+  C1 = "#D55E00",
+  C2 = "#0072B2",
+  C3 = "#CC79A7",
+  C4 = "#009E73"
+)
+
+sort_scenarios <- function(df) {
+  df |>
+    mutate(
+      scenario_id = factor(as.character(scenario_id), levels = scenario_order),
+      scenario_short = factor(as.character(scenario_short), levels = c("C0", "C1", "C2", "C3", "C4"))
+    ) |>
+    arrange(scenario_id)
+}
+
+add_scenario_info <- function(df) {
+  out <- df |>
+    mutate(scenario_id = as.character(scenario_id)) |>
+    left_join(scenario_labels, by = "scenario_id", suffix = c("", "_lookup"))
+
+  if (!("scenario_label" %in% names(out))) {
+    out$scenario_label <- out$scenario_id
+  }
+
+  if ("scenario_label_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_label = coalesce(
+          as.character(scenario_label),
+          as.character(scenario_label_lookup)
+        )
+      )
+  }
+
+  if (!("scenario_short" %in% names(out))) {
+    out$scenario_short <- NA_character_
+  }
+
+  if ("scenario_short_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_short = coalesce(
+          as.character(scenario_short),
+          as.character(scenario_short_lookup)
+        )
+      )
+  }
+
+  out |>
+    mutate(
+      scenario_short = ifelse(
+        is.na(scenario_short),
+        recode(
+          as.character(scenario_id),
+          c0_base = "C0",
+          c1_struq_format_only = "C1",
+          c2_struq_sft = "C2",
+          c3_secalign_dpo = "C3",
+          c4_ih_sft = "C4",
+          .default = as.character(scenario_id)
+        ),
+        scenario_short
+      )
+    ) |>
+    select(-any_of(c("scenario_label_lookup", "scenario_short_lookup"))) |>
+    sort_scenarios()
+}
+
+to_logical_safe <- function(x) {
+  if (is.logical(x)) return(x)
+
+  x_chr <- tolower(as.character(x))
+
+  case_when(
+    x_chr %in% c("true", "t", "1", "yes") ~ TRUE,
+    x_chr %in% c("false", "f", "0", "no") ~ FALSE,
+    TRUE ~ NA
+  )
+}
+
+safe_mean <- function(x) {
+  if (sum(!is.na(x)) == 0) return(NA_real_)
+  mean(x, na.rm = TRUE)
+}
+
+safe_sd <- function(x) {
+  if (sum(!is.na(x)) <= 1) return(NA_real_)
+  sd(x, na.rm = TRUE)
+}
+
+safe_shapiro_p <- function(x) {
+  x <- as.numeric(x)
+  x <- x[is.finite(x)]
+
+  if (length(x) < 3 || length(unique(x)) < 3) {
+    return(NA_real_)
+  }
+
+  # shapiro.test in R supports up to 5000 observations.
+  if (length(x) > 5000) {
+    x <- sample(x, size = 5000)
+  }
+
+  tryCatch(
+    shapiro.test(x)$p.value,
+    error = function(e) NA_real_
+  )
+}
+
+safe_skewness <- function(x) {
+  x <- as.numeric(x)
+  x <- x[is.finite(x)]
+
+  if (length(x) < 3) return(NA_real_)
+
+  m <- mean(x)
+  s <- sd(x)
+
+  if (is.na(s) || s == 0) return(NA_real_)
+
+  mean(((x - m) / s)^3)
+}
+
+safe_excess_kurtosis <- function(x) {
+  x <- as.numeric(x)
+  x <- x[is.finite(x)]
+
+  if (length(x) < 4) return(NA_real_)
+
+  m <- mean(x)
+  s <- sd(x)
+
+  if (is.na(s) || s == 0) return(NA_real_)
+
+  mean(((x - m) / s)^4) - 3
+}
+
+entropy_base2 <- function(x) {
+  x <- as.character(x)
+  x <- x[!is.na(x) & x != ""]
+
+  if (length(x) == 0) {
+    return(NA_real_)
+  }
+
+  p <- prop.table(table(x))
+  -sum(as.numeric(p) * log2(as.numeric(p)))
+}
+
+majority_share <- function(x) {
+  x <- as.character(x)
+  x <- x[!is.na(x) & x != ""]
+
+  if (length(x) == 0) {
+    return(NA_real_)
+  }
+
+  max(as.numeric(prop.table(table(x))))
+}
+
+fmt_pct <- function(x, accuracy = 0.1) {
+  scales::percent(x, accuracy = accuracy)
+}
+
+base_theme <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      legend.position = "bottom",
+      plot.title.position = "plot",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey30"),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(face = "bold")
+    )
+}
+
+write_sampling_csv <- function(df, filename) {
+  readr::write_csv(df, file.path(OUT_TABLE_DIR, filename))
+  invisible(df)
+}
+
+save_sampling_figure <- function(plot, filename, width = 10, height = 6) {
+  ggsave(
+    file.path(OUT_FIG_DIR, filename),
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = 320,
+    bg = "white"
+  )
+  invisible(plot)
+}
+```
+
+# Stratified sampling functions
+
+```{r sampling-functions}
+get_strata_cols <- function(sampling_split) {
+  if (sampling_split == "clean") {
+    base_cols <- c("task_name")
+  } else {
+    base_cols <- c("task_name", "attack_type")
+  }
+
+  if (STRATIFY_BY_SEED) {
+    c("seed", base_cols)
+  } else {
+    base_cols
+  }
+}
+
+draw_stratified_sample <- function(df, sample_size, strata_cols, allocation = "proportional") {
+  strata_cols <- intersect(strata_cols, names(df))
+
+  if (length(strata_cols) == 0) {
+    df$.stratum <- "all"
+  } else {
+    df <- df |>
+      mutate(
+        across(
+          all_of(strata_cols),
+          ~ ifelse(is.na(.x) | .x == "", "NA", as.character(.x))
+        )
+      ) |>
+      tidyr::unite(
+        col = ".stratum",
+        all_of(strata_cols),
+        sep = "__",
+        remove = FALSE
+      )
+  }
+
+  strata_tbl <- df |>
+    count(.stratum, name = ".stratum_n") |>
+    arrange(.stratum)
+
+  if (nrow(strata_tbl) == 0) {
+    return(tibble())
+  }
+
+  if (allocation == "balanced") {
+    strata_prob <- rep(1 / nrow(strata_tbl), nrow(strata_tbl))
+  } else {
+    strata_prob <- strata_tbl$.stratum_n / sum(strata_tbl$.stratum_n)
+  }
+
+  sampled_strata <- sample(
+    strata_tbl$.stratum,
+    size = sample_size,
+    replace = TRUE,
+    prob = strata_prob
+  )
+
+  sampled_indices <- purrr::map_int(
+    sampled_strata,
+    function(s) {
+      candidate_indices <- which(df$.stratum == s)
+      sample(candidate_indices, size = 1, replace = TRUE)
+    }
+  )
+
+  df[sampled_indices, ] |>
+    select(-.stratum)
+}
+
+compute_sample_metrics <- function(sample_df, sampling_split) {
+  is_attack_sample <- sampling_split != "clean"
+
+  tibble(
+    n_sample = nrow(sample_df),
+    task_success_rate = safe_mean(sample_df$task_success_int),
+    clean_accuracy = if_else(
+      sampling_split == "clean",
+      safe_mean(sample_df$task_success_int),
+      NA_real_
+    ),
+    robust_accuracy = if_else(
+      is_attack_sample,
+      safe_mean(sample_df$task_success_int),
+      NA_real_
+    ),
+    asv_rate = if_else(
+      is_attack_sample,
+      safe_mean(sample_df$asv_int),
+      NA_real_
+    ),
+    injection_following_rate = if_else(
+      is_attack_sample,
+      safe_mean(sample_df$asv_int),
+      NA_real_
+    ),
+    invalid_output_rate = safe_mean(sample_df$invalid_output_int),
+    normalized_output_entropy = entropy_base2(sample_df$normalized_output),
+    normalized_output_majority_share = majority_share(sample_df$normalized_output),
+    normalized_output_unique_count = n_distinct(sample_df$normalized_output, na.rm = TRUE)
+  )
+}
+
+run_sampling_for_group <- function(df, sample_size, n_resamples, sampling_split) {
+  strata_cols <- get_strata_cols(sampling_split)
+
+  purrr::map_dfr(
+    seq_len(n_resamples),
+    function(i) {
+      sampled <- draw_stratified_sample(
+        df = df,
+        sample_size = sample_size,
+        strata_cols = strata_cols,
+        allocation = STRATUM_ALLOCATION
+      )
+
+      compute_sample_metrics(sampled, sampling_split = sampling_split) |>
+        mutate(
+          sample_id = i,
+          strata_definition = paste(strata_cols, collapse = " + "),
+          .before = 1
+        )
+    }
+  )
+}
+```
+
+# Load and normalize examples
+
+```{r load-examples}
+inference <- read_first_existing(c(
+  file.path(DESC_DIR, "01_inference_compact.csv")
+)) |>
+  add_scenario_info()
+
+if (!("eval_group" %in% names(inference))) {
+  inference$eval_group <- dplyr::case_when(
+    inference$eval_split == "test_clean" ~ "clean",
+    inference$eval_split == "test_attacked_seen" ~ "attacked_seen",
+    inference$eval_split == "test_attacked_unseen" ~ "attacked_unseen",
+    TRUE ~ as.character(inference$eval_split)
+  )
+}
+
+if (!("attack_type" %in% names(inference))) {
+  inference$attack_type <- NA_character_
+}
+
+if (!("normalized_output" %in% names(inference))) {
+  inference$normalized_output <- NA_character_
+}
+
+if (!("is_correct_flag" %in% names(inference))) {
+  if (all(c("normalized_output", "expected_answer") %in% names(inference))) {
+    inference$is_correct_flag <- inference$normalized_output == inference$expected_answer
+  } else {
+    stop("Could not find is_correct_flag or normalized_output/expected_answer.")
+  }
+}
+
+if (!("followed_attack_flag" %in% names(inference))) {
+  if (all(c("normalized_output", "attack_target") %in% names(inference))) {
+    inference$followed_attack_flag <- inference$normalized_output == inference$attack_target
+  } else {
+    inference$followed_attack_flag <- NA
+  }
+}
+
+if (!("invalid_output_flag" %in% names(inference))) {
+  inference$invalid_output_flag <- NA
+}
+
+examples <- inference |>
+  mutate(
+    seed = as.integer(seed),
+    eval_split = as.character(eval_split),
+    eval_group = as.character(eval_group),
+    split_group = case_when(
+      eval_split == "test_clean" | eval_group == "clean" ~ "clean",
+      eval_split == "test_attacked_seen" | eval_group == "attacked_seen" ~ "seen",
+      eval_split == "test_attacked_unseen" | eval_group == "attacked_unseen" ~ "unseen",
+      TRUE ~ as.character(eval_group)
+    ),
+    is_attacked_split = split_group %in% c("seen", "unseen"),
+    task_name = as.character(task_name),
+    attack_type = ifelse(is.na(attack_type) | attack_type == "", "clean", as.character(attack_type)),
+    normalized_output = ifelse(is.na(normalized_output) | normalized_output == "", "EMPTY_OR_NA", as.character(normalized_output)),
+    is_correct_flag = to_logical_safe(is_correct_flag),
+    followed_attack_flag = to_logical_safe(followed_attack_flag),
+    invalid_output_flag = to_logical_safe(invalid_output_flag),
+    task_success_int = as.integer(is_correct_flag),
+    asv_int = as.integer(followed_attack_flag),
+    invalid_output_int = as.integer(invalid_output_flag)
+  ) |>
+  filter(!is.na(task_success_int))
+
+write_sampling_csv(
+  examples |>
+    count(scenario_short, seed, split_group, task_name, attack_type, name = "n_examples"),
+  "01_example_coverage_by_stratum.csv"
+)
+
+examples |>
+  count(scenario_short, seed, split_group, name = "n_examples") |>
+  knitr::kable(
+    caption = "Table 1 - Example coverage by scenario, seed, and split."
+  )
+```
+
+# Build sampling frames
+
+```{r build-sampling-frames}
+clean_frame <- examples |>
+  filter(split_group == "clean") |>
+  mutate(sampling_split = "clean")
+
+seen_frame <- examples |>
+  filter(split_group == "seen") |>
+  mutate(sampling_split = "seen")
+
+unseen_frame <- examples |>
+  filter(split_group == "unseen") |>
+  mutate(sampling_split = "unseen")
+
+all_attacks_frame <- examples |>
+  filter(is_attacked_split) |>
+  mutate(sampling_split = "all_attacks")
+
+sampling_frames <- bind_rows(
+  clean_frame,
+  seen_frame,
+  unseen_frame,
+  all_attacks_frame
+) |>
+  mutate(
+    sampling_split = factor(
+      sampling_split,
+      levels = c("clean", "seen", "unseen", "all_attacks")
+    )
+  ) |>
+  sort_scenarios()
+
+sampling_frame_coverage <- sampling_frames |>
+  count(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    sampling_split,
+    name = "available_examples"
+  ) |>
+  mutate(
+    target_sample_size = SAMPLE_SIZE,
+    n_resamples = N_RESAMPLES,
+    stratum_allocation = STRATUM_ALLOCATION,
+    stratify_by_seed = STRATIFY_BY_SEED
+  ) |>
+  sort_scenarios()
+
+write_sampling_csv(sampling_frame_coverage, "02_sampling_frame_coverage.csv")
+
+sampling_frame_coverage |>
+  knitr::kable(
+    caption = "Table 2 - Sampling frames used for repeated stratified samples."
+  )
+```
+
+# Full-data reference metrics
+
+```{r full-reference-metrics}
+full_reference_metrics <- sampling_frames |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    sampling_split
+  ) |>
+  summarise(
+    n_full = n(),
+    task_success_rate = safe_mean(task_success_int),
+    clean_accuracy = if_else(first(as.character(sampling_split)) == "clean", safe_mean(task_success_int), NA_real_),
+    robust_accuracy = if_else(first(as.character(sampling_split)) != "clean", safe_mean(task_success_int), NA_real_),
+    asv_rate = if_else(first(as.character(sampling_split)) != "clean", safe_mean(asv_int), NA_real_),
+    injection_following_rate = if_else(first(as.character(sampling_split)) != "clean", safe_mean(asv_int), NA_real_),
+    invalid_output_rate = safe_mean(invalid_output_int),
+    normalized_output_entropy = entropy_base2(normalized_output),
+    normalized_output_majority_share = majority_share(normalized_output),
+    normalized_output_unique_count = n_distinct(normalized_output, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  sort_scenarios()
+
+write_sampling_csv(full_reference_metrics, "03_full_data_reference_metrics.csv")
+
+full_reference_metrics |>
+  select(
+    scenario_short,
+    sampling_split,
+    n_full,
+    clean_accuracy,
+    robust_accuracy,
+    asv_rate,
+    invalid_output_rate,
+    normalized_output_entropy,
+    normalized_output_majority_share,
+    normalized_output_unique_count
+  ) |>
+  mutate(
+    across(
+      c(clean_accuracy, robust_accuracy, asv_rate, invalid_output_rate, normalized_output_majority_share),
+      ~ fmt_pct(.x)
+    ),
+    normalized_output_entropy = scales::number(normalized_output_entropy, accuracy = 0.001)
+  ) |>
+  knitr::kable(
+    caption = "Table 3 - Full-data reference metrics."
+  )
+```
+
+# Run repeated stratified sampling
+
+```{r run-stratified-sampling}
+sampling_groups <- sampling_frames |>
+  group_by(scenario_id, scenario_short, scenario_label, sampling_split) |>
+  group_split()
+
+sampled_metrics <- purrr::map_dfr(
+  sampling_groups,
+  function(group_df) {
+    group_df <- as_tibble(group_df)
+
+    scenario_id_value <- as.character(group_df$scenario_id[[1]])
+    scenario_short_value <- as.character(group_df$scenario_short[[1]])
+    scenario_label_value <- as.character(group_df$scenario_label[[1]])
+    sampling_split_value <- as.character(group_df$sampling_split[[1]])
+
+    run_sampling_for_group(
+      df = group_df,
+      sample_size = SAMPLE_SIZE,
+      n_resamples = N_RESAMPLES,
+      sampling_split = sampling_split_value
+    ) |>
+      mutate(
+        scenario_id = scenario_id_value,
+        scenario_short = scenario_short_value,
+        scenario_label = scenario_label_value,
+        sampling_split = sampling_split_value,
+        sample_size = SAMPLE_SIZE,
+        n_resamples = N_RESAMPLES,
+        stratum_allocation = STRATUM_ALLOCATION,
+        stratify_by_seed = STRATIFY_BY_SEED,
+        .before = 1
+      )
+  }
+) |>
+  sort_scenarios()
+
+write_sampling_csv(sampled_metrics, "04_stratified_sample_metrics_wide.csv")
+
+sampled_metrics |>
+  select(
+    scenario_short,
+    sampling_split,
+    sample_id,
+    task_success_rate,
+    clean_accuracy,
+    robust_accuracy,
+    asv_rate,
+    invalid_output_rate,
+    normalized_output_entropy,
+    normalized_output_majority_share
+  ) |>
+  head(30) |>
+  mutate(
+    across(
+      c(task_success_rate, clean_accuracy, robust_accuracy, asv_rate, invalid_output_rate, normalized_output_majority_share),
+      ~ fmt_pct(.x)
+    ),
+    normalized_output_entropy = scales::number(normalized_output_entropy, accuracy = 0.001)
+  ) |>
+  knitr::kable(
+    caption = "Table 4 - First stratified sample metric rows."
+  )
+```
+
+# Long format and empirical summaries
+
+```{r sampling-summaries}
+metric_metadata <- tribble(
+  ~metric, ~metric_label, ~direction,
+  "task_success_rate", "Task success rate", "higher",
+  "clean_accuracy", "Clean accuracy", "higher",
+  "robust_accuracy", "Robust accuracy", "higher",
+  "asv_rate", "ASV / attack success rate", "lower",
+  "injection_following_rate", "Injection Following Rate", "lower",
+  "invalid_output_rate", "Invalid output rate", "lower",
+  "normalized_output_entropy", "Normalized output entropy", "context",
+  "normalized_output_majority_share", "Normalized output majority share", "context",
+  "normalized_output_unique_count", "Normalized output unique count", "context"
+)
+
+sampled_metrics_long <- sampled_metrics |>
+  pivot_longer(
+    cols = all_of(metric_metadata$metric),
+    names_to = "metric",
+    values_to = "sample_value"
+  ) |>
+  left_join(metric_metadata, by = "metric") |>
+  filter(!is.na(sample_value))
+
+full_reference_long <- full_reference_metrics |>
+  pivot_longer(
+    cols = all_of(metric_metadata$metric),
+    names_to = "metric",
+    values_to = "full_value"
+  ) |>
+  left_join(metric_metadata, by = "metric") |>
+  filter(!is.na(full_value))
+
+sampling_summary <- sampled_metrics_long |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    sampling_split,
+    metric,
+    metric_label,
+    direction
+  ) |>
+  summarise(
+    n_resamples_observed = n(),
+    sample_size = first(sample_size),
+    mean_sample_value = mean(sample_value, na.rm = TRUE),
+    sd_sample_value = safe_sd(sample_value),
+    median_sample_value = median(sample_value, na.rm = TRUE),
+    q025 = as.numeric(quantile(sample_value, 0.025, na.rm = TRUE)),
+    q050 = as.numeric(quantile(sample_value, 0.500, na.rm = TRUE)),
+    q975 = as.numeric(quantile(sample_value, 0.975, na.rm = TRUE)),
+    min_sample_value = min(sample_value, na.rm = TRUE),
+    max_sample_value = max(sample_value, na.rm = TRUE),
+    skewness = safe_skewness(sample_value),
+    excess_kurtosis = safe_excess_kurtosis(sample_value),
+    shapiro_p_value = safe_shapiro_p(sample_value),
+    .groups = "drop"
+  ) |>
+  left_join(
+    full_reference_long |>
+      select(scenario_id, sampling_split, metric, full_value),
+    by = c("scenario_id", "sampling_split", "metric")
+  ) |>
+  mutate(
+    mean_bias_vs_full = mean_sample_value - full_value,
+    normality_note = case_when(
+      is.na(shapiro_p_value) ~ "Not enough variation for Shapiro test",
+      shapiro_p_value >= 0.05 ~ "No strong Shapiro evidence against normality",
+      TRUE ~ "Shapiro suggests non-normal sample distribution"
+    )
+  ) |>
+  sort_scenarios()
+
+write_sampling_csv(sampled_metrics_long, "05_stratified_sample_metrics_long.csv")
+write_sampling_csv(full_reference_long, "06_full_reference_metrics_long.csv")
+write_sampling_csv(sampling_summary, "07_sampling_empirical_summary.csv")
+
+sampling_summary |>
+  filter(
+    metric %in% c("clean_accuracy", "robust_accuracy", "asv_rate", "invalid_output_rate"),
+    sampling_split %in% c("clean", "all_attacks")
+  ) |>
+  select(
+    scenario_short,
+    sampling_split,
+    metric_label,
+    sample_size,
+    n_resamples_observed,
+    full_value,
+    mean_sample_value,
+    sd_sample_value,
+    q025,
+    q975,
+    mean_bias_vs_full,
+    shapiro_p_value,
+    normality_note
+  ) |>
+  mutate(
+    across(
+      c(full_value, mean_sample_value, sd_sample_value, q025, q975, mean_bias_vs_full),
+      ~ fmt_pct(.x)
+    ),
+    shapiro_p_value = scales::pvalue(shapiro_p_value, accuracy = 0.001)
+  ) |>
+  knitr::kable(
+    caption = "Table 5 - Empirical summary of repeated stratified samples."
+  )
+```
+
+# Normalized output distribution
+
+```{r normalized-output-distribution}
+full_normalized_output_distribution <- sampling_frames |>
+  count(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    sampling_split,
+    normalized_output,
+    name = "count"
+  ) |>
+  group_by(scenario_id, scenario_short, scenario_label, sampling_split) |>
+  mutate(
+    total = sum(count),
+    rate = count / total
+  ) |>
+  ungroup() |>
+  arrange(scenario_id, sampling_split, desc(rate))
+
+write_sampling_csv(full_normalized_output_distribution, "08_full_normalized_output_distribution.csv")
+
+full_normalized_output_distribution |>
+  group_by(scenario_short, sampling_split) |>
+  slice_max(order_by = rate, n = 5, with_ties = FALSE) |>
+  ungroup() |>
+  mutate(rate = fmt_pct(rate)) |>
+  knitr::kable(
+    caption = "Table 6 - Top normalized outputs by scenario and split."
+  )
+
+normalized_output_stability <- sampling_summary |>
+  filter(metric %in% c(
+    "normalized_output_entropy",
+    "normalized_output_majority_share",
+    "normalized_output_unique_count"
+  ))
+
+write_sampling_csv(normalized_output_stability, "09_normalized_output_stability_summary.csv")
+```
+
+# Delta summaries vs C0
+
+```{r delta-vs-c0}
+sampled_metric_deltas_vs_c0 <- sampled_metrics_long |>
+  select(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    sampling_split,
+    sample_id,
+    metric,
+    metric_label,
+    direction,
+    sample_value
+  ) |>
+  left_join(
+    sampled_metrics_long |>
+      filter(scenario_id == "c0_base") |>
+      select(
+        sampling_split,
+        sample_id,
+        metric,
+        c0_sample_value = sample_value
+      ),
+    by = c("sampling_split", "sample_id", "metric")
+  ) |>
+  mutate(
+    delta_vs_c0 = sample_value - c0_sample_value,
+    direction_adjusted_delta_vs_c0 = case_when(
+      direction == "higher" ~ delta_vs_c0,
+      direction == "lower" ~ -delta_vs_c0,
+      TRUE ~ delta_vs_c0
+    )
+  ) |>
+  filter(scenario_id != "c0_base")
+
+delta_summary_vs_c0 <- sampled_metric_deltas_vs_c0 |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    sampling_split,
+    metric,
+    metric_label,
+    direction
+  ) |>
+  summarise(
+    n_resamples_observed = n(),
+    mean_delta_vs_c0 = mean(delta_vs_c0, na.rm = TRUE),
+    median_delta_vs_c0 = median(delta_vs_c0, na.rm = TRUE),
+    q025_delta_vs_c0 = as.numeric(quantile(delta_vs_c0, 0.025, na.rm = TRUE)),
+    q975_delta_vs_c0 = as.numeric(quantile(delta_vs_c0, 0.975, na.rm = TRUE)),
+    mean_direction_adjusted_delta_vs_c0 = mean(direction_adjusted_delta_vs_c0, na.rm = TRUE),
+    probability_better_than_c0 = mean(direction_adjusted_delta_vs_c0 > 0, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  sort_scenarios()
+
+write_sampling_csv(sampled_metric_deltas_vs_c0, "10_sample_metric_deltas_vs_c0.csv")
+write_sampling_csv(delta_summary_vs_c0, "11_delta_summary_vs_c0.csv")
+
+delta_summary_vs_c0 |>
+  filter(
+    metric %in% c("clean_accuracy", "robust_accuracy", "asv_rate", "invalid_output_rate"),
+    sampling_split %in% c("clean", "all_attacks")
+  ) |>
+  select(
+    scenario_short,
+    sampling_split,
+    metric_label,
+    mean_delta_vs_c0,
+    q025_delta_vs_c0,
+    q975_delta_vs_c0,
+    mean_direction_adjusted_delta_vs_c0,
+    probability_better_than_c0
+  ) |>
+  mutate(
+    across(
+      c(
+        mean_delta_vs_c0,
+        q025_delta_vs_c0,
+        q975_delta_vs_c0,
+        mean_direction_adjusted_delta_vs_c0,
+        probability_better_than_c0
+      ),
+      ~ fmt_pct(.x)
+    )
+  ) |>
+  knitr::kable(
+    caption = "Table 7 - Stratified sample deltas against C0."
+  )
+```
+
+# Figures
+
+## Boxplots of sampled metrics
+
+```{r fig-boxplots-main, fig.width=11, fig.height=7}
+boxplot_data <- sampled_metrics_long |>
+  filter(
+    metric %in% c("clean_accuracy", "robust_accuracy", "asv_rate", "invalid_output_rate"),
+    sampling_split %in% c("clean", "all_attacks")
+  ) |>
+  mutate(
+    metric_label = factor(
+      metric_label,
+      levels = c(
+        "Clean accuracy",
+        "Robust accuracy",
+        "ASV / attack success rate",
+        "Invalid output rate"
+      )
+    )
+  )
+
+p_boxplots <- boxplot_data |>
+  ggplot(aes(x = scenario_short, y = sample_value, fill = scenario_short)) +
+  geom_boxplot(outlier.alpha = 0.25, width = 0.68, show.legend = FALSE) +
+  geom_point(
+    data = full_reference_long |>
+      filter(
+        metric %in% c("clean_accuracy", "robust_accuracy", "asv_rate", "invalid_output_rate"),
+        sampling_split %in% c("clean", "all_attacks")
+      ),
+    aes(x = scenario_short, y = full_value),
+    inherit.aes = FALSE,
+    size = 2.4,
+    shape = 4
+  ) +
+  facet_grid(metric_label ~ sampling_split, scales = "free_y") +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Repeated stratified samples of size 30",
+    subtitle = "Boxplots show sample metric distributions. X marks the full-data reference value.",
+    x = "Scenario",
+    y = "Sample metric value"
+  ) +
+  base_theme()
+
+print(p_boxplots)
+
+save_sampling_figure(
+  p_boxplots,
+  "01_sample_metric_boxplots.png",
+  width = 11,
+  height = 7
+)
+```
+
+## Histograms of sampled metrics
+
+```{r fig-histograms-main, fig.width=11, fig.height=8}
+hist_data <- sampled_metrics_long |>
+  filter(
+    metric %in% c("clean_accuracy", "robust_accuracy", "asv_rate", "invalid_output_rate"),
+    sampling_split %in% c("clean", "all_attacks")
+  ) |>
+  mutate(
+    metric_label = factor(
+      metric_label,
+      levels = c(
+        "Clean accuracy",
+        "Robust accuracy",
+        "ASV / attack success rate",
+        "Invalid output rate"
+      )
+    )
+  )
+
+p_histograms <- hist_data |>
+  ggplot(aes(x = sample_value, fill = scenario_short)) +
+  geom_histogram(bins = 20, alpha = 0.7, position = "identity") +
+  facet_grid(metric_label ~ sampling_split, scales = "free") +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Sample metric distributions",
+    subtitle = "Repeated stratified samples of size 30.",
+    x = "Sample metric value",
+    y = "Number of samples",
+    fill = "Scenario"
+  ) +
+  base_theme()
+
+print(p_histograms)
+
+save_sampling_figure(
+  p_histograms,
+  "02_sample_metric_histograms.png",
+  width = 11,
+  height = 8
+)
+```
+
+## QQ plots
+
+```{r fig-qqplots, fig.width=11, fig.height=8}
+qq_data <- sampled_metrics_long |>
+  filter(
+    metric %in% c("clean_accuracy", "robust_accuracy", "asv_rate"),
+    sampling_split %in% c("clean", "all_attacks")
+  ) |>
+  mutate(
+    metric_label = factor(
+      metric_label,
+      levels = c(
+        "Clean accuracy",
+        "Robust accuracy",
+        "ASV / attack success rate"
+      )
+    )
+  )
+
+p_qq <- qq_data |>
+  ggplot(aes(sample = sample_value, color = scenario_short)) +
+  stat_qq(alpha = 0.45, size = 1.1) +
+  stat_qq_line(linewidth = 0.5) +
+  facet_grid(metric_label ~ sampling_split, scales = "free") +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "QQ plots of sample metric distributions",
+    subtitle = "Used as a diagnostic for the distribution of sample means, not raw examples.",
+    x = "Theoretical quantiles",
+    y = "Sample quantiles",
+    color = "Scenario"
+  ) +
+  base_theme()
+
+print(p_qq)
+
+save_sampling_figure(
+  p_qq,
+  "03_sample_metric_qqplots.png",
+  width = 11,
+  height = 8
+)
+```
+
+## Empirical intervals
+
+```{r fig-empirical-intervals, fig.width=11, fig.height=7}
+interval_data <- sampling_summary |>
+  filter(
+    metric %in% c("clean_accuracy", "robust_accuracy", "asv_rate", "invalid_output_rate"),
+    sampling_split %in% c("clean", "all_attacks")
+  ) |>
+  mutate(
+    metric_label = factor(
+      metric_label,
+      levels = c(
+        "Clean accuracy",
+        "Robust accuracy",
+        "ASV / attack success rate",
+        "Invalid output rate"
+      )
+    )
+  )
+
+p_intervals <- interval_data |>
+  ggplot(aes(x = scenario_short, y = mean_sample_value, color = scenario_short)) +
+  geom_errorbar(
+    aes(ymin = q025, ymax = q975),
+    width = 0.13,
+    linewidth = 0.75,
+    show.legend = FALSE
+  ) +
+  geom_point(size = 3.2, show.legend = FALSE) +
+  geom_point(
+    aes(y = full_value),
+    shape = 4,
+    size = 2.5,
+    show.legend = FALSE
+  ) +
+  facet_grid(metric_label ~ sampling_split, scales = "free_y") +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Empirical 95% intervals from stratified samples",
+    subtitle = "Point is the sample mean; error bars are 2.5% to 97.5%; X marks full-data value.",
+    x = "Scenario",
+    y = "Metric value"
+  ) +
+  base_theme()
+
+print(p_intervals)
+
+save_sampling_figure(
+  p_intervals,
+  "04_empirical_intervals_from_samples.png",
+  width = 11,
+  height = 7
+)
+```
+
+## Probability of improvement vs C0
+
+```{r fig-probability-better-c0, fig.width=11, fig.height=6}
+probability_plot_data <- delta_summary_vs_c0 |>
+  filter(
+    metric %in% c("clean_accuracy", "robust_accuracy", "asv_rate", "invalid_output_rate"),
+    sampling_split %in% c("clean", "all_attacks")
+  ) |>
+  mutate(
+    metric_label = factor(
+      metric_label,
+      levels = c(
+        "Clean accuracy",
+        "Robust accuracy",
+        "ASV / attack success rate",
+        "Invalid output rate"
+      )
+    )
+  )
+
+p_probability <- probability_plot_data |>
+  ggplot(aes(x = scenario_short, y = probability_better_than_c0, fill = scenario_short)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey45") +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  facet_grid(metric_label ~ sampling_split) +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(0, 1)) +
+  labs(
+    title = "Probability of being better than C0 across stratified samples",
+    subtitle = "For lower-is-better metrics, direction is adjusted so higher values mean better than C0.",
+    x = "Scenario",
+    y = "Pr(sample better than C0)"
+  ) +
+  base_theme()
+
+print(p_probability)
+
+save_sampling_figure(
+  p_probability,
+  "05_probability_better_than_c0.png",
+  width = 11,
+  height = 6
+)
+```
+
+## Normalized output stability
+
+```{r fig-normalized-output-stability, fig.width=11, fig.height=7}
+normalized_stability_plot <- sampled_metrics_long |>
+  filter(
+    metric %in% c(
+      "normalized_output_entropy",
+      "normalized_output_majority_share",
+      "normalized_output_unique_count"
+    )
+  ) |>
+  mutate(
+    metric_label = factor(
+      metric_label,
+      levels = c(
+        "Normalized output entropy",
+        "Normalized output majority share",
+        "Normalized output unique count"
+      )
+    )
+  )
+
+p_normalized_stability <- normalized_stability_plot |>
+  ggplot(aes(x = scenario_short, y = sample_value, fill = scenario_short)) +
+  geom_boxplot(outlier.alpha = 0.25, width = 0.68, show.legend = FALSE) +
+  facet_grid(metric_label ~ sampling_split, scales = "free_y") +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Normalized output stability across stratified samples",
+    subtitle = "Entropy, majority share, and unique output count are categorical-output diagnostics.",
+    x = "Scenario",
+    y = "Sample value"
+  ) +
+  base_theme()
+
+print(p_normalized_stability)
+
+save_sampling_figure(
+  p_normalized_stability,
+  "06_normalized_output_stability.png",
+  width = 11,
+  height = 7
+)
+```
+
+## ASV vs robust accuracy in samples
+
+```{r fig-sampled-asv-vs-robust, fig.width=9, fig.height=6.5}
+sampled_asv_robust <- sampled_metrics |>
+  filter(sampling_split == "all_attacks")
+
+p_sampled_asv_robust <- sampled_asv_robust |>
+  ggplot(aes(x = asv_rate, y = robust_accuracy, color = scenario_short)) +
+  geom_point(alpha = 0.25, size = 1.4) +
+  geom_point(
+    data = full_reference_metrics |> filter(sampling_split == "all_attacks"),
+    aes(x = asv_rate, y = robust_accuracy, color = scenario_short),
+    inherit.aes = FALSE,
+    size = 4,
+    shape = 4
+  ) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "ASV vs robust accuracy across stratified samples",
+    subtitle = "Each transparent point is one sample of size 30. X marks full-data reference.",
+    x = "ASV",
+    y = "Robust accuracy",
+    color = "Scenario"
+  ) +
+  base_theme()
+
+print(p_sampled_asv_robust)
+
+save_sampling_figure(
+  p_sampled_asv_robust,
+  "07_sampled_asv_vs_robust_accuracy.png",
+  width = 9,
+  height = 6.5
+)
+```
+
+# Paper-ready summary
+
+```{r paper-ready-summary}
+paper_sampling_table <- sampling_summary |>
+  filter(
+    metric %in% c("clean_accuracy", "robust_accuracy", "asv_rate", "invalid_output_rate"),
+    sampling_split %in% c("clean", "all_attacks")
+  ) |>
+  select(
+    scenario_short,
+    sampling_split,
+    metric_label,
+    sample_size,
+    n_resamples_observed,
+    full_value,
+    mean_sample_value,
+    sd_sample_value,
+    q025,
+    q975,
+    mean_bias_vs_full,
+    shapiro_p_value,
+    normality_note
+  ) |>
+  mutate(
+    across(
+      c(full_value, mean_sample_value, sd_sample_value, q025, q975, mean_bias_vs_full),
+      ~ fmt_pct(.x)
+    ),
+    shapiro_p_value = scales::pvalue(shapiro_p_value, accuracy = 0.001)
+  )
+
+write_sampling_csv(paper_sampling_table, "12_paper_ready_sampling_summary.csv")
+
+paper_sampling_table |>
+  knitr::kable(
+    caption = "Table 8 - Paper-ready stratified sampling summary."
+  )
+```
+
+# Methodological notes
+
+```{r methodological-notes, results='asis'}
+cat("
+## How to interpret this report
+
+This analysis pools the available seeds within each scenario and repeatedly draws stratified samples of size 30. The purpose is to assess whether the observed conclusions are stable under balanced small-sample subsets.
+
+The raw variables are not normally distributed. Accuracy and ASV are binary at the example level, while normalized_output is categorical. Normality diagnostics here apply only to the distribution of sample-level means produced by repeated stratified sampling.
+
+A sample size of 30 can make sample means more stable, but it does not guarantee normality, especially for proportions near 0 or 1. For rare events such as very low ASV, Wilson intervals and paired/bootstrap analyses remain more appropriate for final inference.
+
+The key interpretation is stability: if a scenario remains better than C0 across most repeated stratified samples, the result is less likely to depend on a small subset of examples.
+")
+```
+
+# Generated files
+
+Tables are saved in:
+
+```text
+tables/stratified_sampling_analysis/
+```
+
+Figures are saved in:
+
+```text
+figures/stratified_sampling_analysis/
+```
+
+Main files:
+
+```text
+01_example_coverage_by_stratum.csv
+02_sampling_frame_coverage.csv
+03_full_data_reference_metrics.csv
+04_stratified_sample_metrics_wide.csv
+05_stratified_sample_metrics_long.csv
+06_full_reference_metrics_long.csv
+07_sampling_empirical_summary.csv
+08_full_normalized_output_distribution.csv
+09_normalized_output_stability_summary.csv
+10_sample_metric_deltas_vs_c0.csv
+11_delta_summary_vs_c0.csv
+12_paper_ready_sampling_summary.csv
+
+01_sample_metric_boxplots.png
+02_sample_metric_histograms.png
+03_sample_metric_qqplots.png
+04_empirical_intervals_from_samples.png
+05_probability_better_than_c0.png
+06_normalized_output_stability.png
+07_sampled_asv_vs_robust_accuracy.png
+```

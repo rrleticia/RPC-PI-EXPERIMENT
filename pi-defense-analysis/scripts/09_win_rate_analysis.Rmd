@@ -1,0 +1,1286 @@
+---
+title: "RPC-PI Experiment - Win Rate Analysis"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6,
+  dpi = 300
+)
+
+options(knitr.kable.NA = "-")
+
+required_packages <- c(
+  "tidyverse",
+  "readr",
+  "ggplot2",
+  "scales",
+  "stringr",
+  "forcats",
+  "fs",
+  "here",
+  "knitr",
+  "jsonlite"
+)
+
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(scales)
+library(stringr)
+library(forcats)
+library(fs)
+library(here)
+library(knitr)
+library(jsonlite)
+```
+
+# Objective
+
+This R Markdown focuses on **judged preference / Win Rate**.
+
+It is different from accuracy and ASV:
+
+- accuracy asks whether the model predicted the correct task label;
+- ASV asks whether the attack reached the adversarial target;
+- Win Rate asks whether a judge preferred the defended model output over the C0 reference output.
+
+The key metric is:
+
+\[
+AdjustedWinRate = \frac{wins + 0.5 \cdot ties}{valid\_judgments}
+\]
+
+Interpretation:
+
+- `adjusted_win_rate > 0.50`: the defended scenario is preferred over C0 on average;
+- `adjusted_win_rate = 0.50`: parity with C0;
+- `adjusted_win_rate < 0.50`: C0 is preferred on average.
+
+In this experiment, the win-rate artifacts compare each defended scenario against `C0 - Base model` on `test_clean`.
+
+# Paths and configuration
+
+```{r paths}
+DATA_DIR <- here::here("data", "results")
+PAIRWISE_DIR <- file.path(DATA_DIR, "pairwise_metrics", "full")
+
+OUT_TABLE_DIR <- here::here("tables", "win_rate_analysis")
+OUT_FIG_DIR <- here::here("figures", "win_rate_analysis")
+
+fs::dir_create(OUT_TABLE_DIR)
+fs::dir_create(OUT_FIG_DIR)
+
+if (!dir.exists(DATA_DIR)) {
+  stop(
+    "Could not find data/results/. Extract the ZIP first with: ",
+    "unzip('results.zip', exdir = 'data')"
+  )
+}
+
+if (!dir.exists(PAIRWISE_DIR)) {
+  stop("Could not find pairwise metrics directory: ", PAIRWISE_DIR)
+}
+```
+
+# Helper functions
+
+```{r helpers}
+read_first_existing <- function(paths, required = TRUE) {
+  existing <- paths[file.exists(paths)]
+
+  if (length(existing) == 0) {
+    if (required) {
+      stop("None of these files were found:\n", paste(paths, collapse = "\n"))
+    }
+    return(NULL)
+  }
+
+  readr::read_csv(existing[[1]], show_col_types = FALSE)
+}
+
+read_jsonl_file <- function(path, bad_lines_filename = "00_bad_jsonl_lines.csv") {
+  if (!file.exists(path)) {
+    return(NULL)
+  }
+
+  # Robust JSONL reader:
+  # jsonlite::stream_in() stops at the first malformed/truncated line.
+  # Here we parse line by line, keep valid records, and save malformed lines
+  # for inspection instead of stopping the whole report.
+  lines <- readLines(path, warn = FALSE, encoding = "UTF-8")
+
+  if (length(lines) == 0) {
+    return(tibble())
+  }
+
+  parsed <- vector("list", length(lines))
+  bad_lines <- list()
+
+  for (i in seq_along(lines)) {
+    line <- lines[[i]]
+
+    if (is.na(line) || trimws(line) == "") {
+      next
+    }
+
+    obj <- tryCatch(
+      jsonlite::fromJSON(line, flatten = TRUE),
+      error = function(e) {
+        bad_lines[[length(bad_lines) + 1]] <<- tibble(
+          line_number = i,
+          error = conditionMessage(e),
+          line_prefix = substr(line, 1, 250)
+        )
+        NULL
+      }
+    )
+
+    if (!is.null(obj)) {
+      parsed[[i]] <- tibble::as_tibble(obj)
+    }
+  }
+
+  parsed <- parsed[!vapply(parsed, is.null, logical(1))]
+
+  bad_lines_df <- dplyr::bind_rows(bad_lines)
+
+  if (nrow(bad_lines_df) > 0) {
+    readr::write_csv(
+      bad_lines_df,
+      file.path(OUT_TABLE_DIR, bad_lines_filename)
+    )
+
+    message(
+      "Skipped ",
+      nrow(bad_lines_df),
+      " malformed JSONL line(s). See ",
+      file.path(OUT_TABLE_DIR, bad_lines_filename)
+    )
+  }
+
+  if (length(parsed) == 0) {
+    return(tibble())
+  }
+
+  dplyr::bind_rows(parsed)
+}
+
+scenario_order <- c(
+  "c0_base",
+  "c1_struq_format_only",
+  "c2_struq_sft",
+  "c3_secalign_dpo",
+  "c4_ih_sft"
+)
+
+scenario_labels <- tibble(
+  scenario_id = scenario_order,
+  scenario_short = c("C0", "C1", "C2", "C3", "C4"),
+  scenario_label = c(
+    "C0 - Base model",
+    "C1 - StruQ format-only",
+    "C2 - StruQ-like SFT",
+    "C3 - SecAlign-like DPO",
+    "C4 - Instruction-Hierarchy-like SFT"
+  )
+)
+
+scenario_palette <- c(
+  C0 = "#7F7F7F",
+  C1 = "#D55E00",
+  C2 = "#0072B2",
+  C3 = "#CC79A7",
+  C4 = "#009E73"
+)
+
+sort_scenarios <- function(df) {
+  df |>
+    mutate(
+      scenario_id = factor(as.character(scenario_id), levels = scenario_order),
+      scenario_short = factor(as.character(scenario_short), levels = c("C0", "C1", "C2", "C3", "C4"))
+    ) |>
+    arrange(scenario_id)
+}
+
+add_scenario_info <- function(df, id_col = "scenario_id", label_col = NULL) {
+  out <- df |>
+    mutate(scenario_id = as.character(.data[[id_col]]))
+
+  if (!is.null(label_col) && label_col %in% names(out)) {
+    out <- out |>
+      mutate(scenario_label = as.character(.data[[label_col]]))
+  }
+
+  out <- out |>
+    left_join(scenario_labels, by = "scenario_id", suffix = c("", "_lookup"))
+
+  if (!("scenario_label" %in% names(out))) {
+    out$scenario_label <- out$scenario_id
+  }
+
+  if ("scenario_label_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_label = coalesce(
+          as.character(scenario_label),
+          as.character(scenario_label_lookup)
+        )
+      )
+  }
+
+  if (!("scenario_short" %in% names(out))) {
+    out$scenario_short <- NA_character_
+  }
+
+  if ("scenario_short_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_short = coalesce(
+          as.character(scenario_short),
+          as.character(scenario_short_lookup)
+        )
+      )
+  }
+
+  out |>
+    mutate(
+      scenario_short = ifelse(
+        is.na(scenario_short),
+        recode(
+          as.character(scenario_id),
+          c0_base = "C0",
+          c1_struq_format_only = "C1",
+          c2_struq_sft = "C2",
+          c3_secalign_dpo = "C3",
+          c4_ih_sft = "C4",
+          .default = as.character(scenario_id)
+        ),
+        scenario_short
+      )
+    ) |>
+    select(-any_of(c("scenario_label_lookup", "scenario_short_lookup"))) |>
+    sort_scenarios()
+}
+
+to_logical_safe <- function(x) {
+  if (is.logical(x)) return(x)
+
+  x_chr <- tolower(as.character(x))
+
+  case_when(
+    x_chr %in% c("true", "t", "1", "yes") ~ TRUE,
+    x_chr %in% c("false", "f", "0", "no") ~ FALSE,
+    TRUE ~ NA
+  )
+}
+
+safe_sd <- function(x) {
+  if (sum(!is.na(x)) <= 1) return(NA_real_)
+  sd(x, na.rm = TRUE)
+}
+
+safe_sem <- function(x) {
+  n <- sum(!is.na(x))
+  if (n <= 1) return(NA_real_)
+  sd(x, na.rm = TRUE) / sqrt(n)
+}
+
+safe_tcrit <- function(n, confidence = 0.95) {
+  if (is.na(n) || n <= 1) return(NA_real_)
+  alpha <- 1 - confidence
+  qt(1 - alpha / 2, df = n - 1)
+}
+
+wilson_ci <- function(k, n, conf.level = 0.95) {
+  if (is.na(k) || is.na(n) || n <= 0) {
+    return(tibble(estimate = NA_real_, ci_low = NA_real_, ci_high = NA_real_))
+  }
+
+  z <- qnorm(1 - (1 - conf.level) / 2)
+  p <- k / n
+  denom <- 1 + z^2 / n
+  center <- (p + z^2 / (2 * n)) / denom
+  half_width <- z * sqrt((p * (1 - p) / n) + (z^2 / (4 * n^2))) / denom
+
+  tibble(
+    estimate = p,
+    ci_low = max(0, center - half_width),
+    ci_high = min(1, center + half_width)
+  )
+}
+
+safe_binom_p <- function(x, n, p = 0.5, alternative = "greater") {
+  if (is.na(x) || is.na(n) || n <= 0 || x < 0 || x > n) {
+    return(NA_real_)
+  }
+
+  tryCatch(
+    binom.test(as.integer(x), as.integer(n), p = p, alternative = alternative)$p.value,
+    error = function(e) NA_real_
+  )
+}
+
+fmt_pct <- function(x, accuracy = 0.1) {
+  scales::percent(x, accuracy = accuracy)
+}
+
+base_theme <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      legend.position = "bottom",
+      plot.title.position = "plot",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey30"),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(face = "bold")
+    )
+}
+
+write_win_csv <- function(df, filename) {
+  readr::write_csv(df, file.path(OUT_TABLE_DIR, filename))
+  invisible(df)
+}
+
+save_win_figure <- function(plot, filename, width = 10, height = 6) {
+  ggsave(
+    file.path(OUT_FIG_DIR, filename),
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = 320,
+    bg = "white"
+  )
+  invisible(plot)
+}
+```
+
+# Load win-rate metrics
+
+```{r load-win-metrics}
+win_metrics_path <- file.path(PAIRWISE_DIR, "win_rate_metrics.csv")
+
+win_metrics_raw <- read_first_existing(c(win_metrics_path))
+
+win_metrics <- win_metrics_raw |>
+  rename(
+    scenario_id = defended_scenario_id,
+    seed = defended_seed
+  ) |>
+  add_scenario_info(id_col = "scenario_id", label_col = "defended_scenario_label") |>
+  mutate(
+    seed = as.integer(seed),
+    eval_split = as.character(eval_split),
+    wins = as.integer(wins),
+    losses = as.integer(losses),
+    ties = as.integer(ties),
+    valid_judgments = as.integer(valid_judgments),
+    n_judgments = as.integer(n_judgments),
+    win_rate_recomputed = if_else(valid_judgments > 0, wins / valid_judgments, NA_real_),
+    loss_rate_recomputed = if_else(valid_judgments > 0, losses / valid_judgments, NA_real_),
+    tie_rate_recomputed = if_else(valid_judgments > 0, ties / valid_judgments, NA_real_),
+    adjusted_win_rate_recomputed = if_else(
+      valid_judgments > 0,
+      (wins + 0.5 * ties) / valid_judgments,
+      NA_real_
+    ),
+    non_tie_judgments = wins + losses,
+    non_tie_win_rate = if_else(non_tie_judgments > 0, wins / non_tie_judgments, NA_real_),
+    net_win_rate = win_rate - loss_rate,
+    adjusted_win_rate_delta_from_parity = adjusted_win_rate - 0.5,
+    preference_direction = case_when(
+      adjusted_win_rate > 0.5 ~ "Defended preferred",
+      adjusted_win_rate < 0.5 ~ "C0 preferred",
+      TRUE ~ "Parity"
+    )
+  ) |>
+  sort_scenarios()
+
+write_win_csv(win_metrics, "01_win_rate_metrics_enriched.csv")
+
+win_metrics |>
+  select(
+    scenario_short,
+    seed,
+    eval_split,
+    n_judgments,
+    valid_judgments,
+    wins,
+    losses,
+    ties,
+    win_rate,
+    loss_rate,
+    tie_rate,
+    adjusted_win_rate,
+    non_tie_win_rate,
+    net_win_rate,
+    invalid_judgment_rate
+  ) |>
+  mutate(
+    across(
+      c(
+        win_rate,
+        loss_rate,
+        tie_rate,
+        adjusted_win_rate,
+        non_tie_win_rate,
+        net_win_rate,
+        invalid_judgment_rate
+      ),
+      ~ fmt_pct(.x)
+    )
+  ) |>
+  knitr::kable(
+    caption = "Table 1 - Win-rate metrics by scenario and seed."
+  )
+```
+
+# Validate recomputation
+
+```{r validate-recomputed-metrics}
+win_metric_validation <- win_metrics |>
+  transmute(
+    scenario_short,
+    seed,
+    eval_split,
+    win_rate_diff = win_rate_recomputed - win_rate,
+    loss_rate_diff = loss_rate_recomputed - loss_rate,
+    tie_rate_diff = tie_rate_recomputed - tie_rate,
+    adjusted_win_rate_diff = adjusted_win_rate_recomputed - adjusted_win_rate
+  )
+
+write_win_csv(win_metric_validation, "02_win_rate_recomputation_validation.csv")
+
+win_metric_validation |>
+  summarise(
+    max_abs_win_rate_diff = max(abs(win_rate_diff), na.rm = TRUE),
+    max_abs_loss_rate_diff = max(abs(loss_rate_diff), na.rm = TRUE),
+    max_abs_tie_rate_diff = max(abs(tie_rate_diff), na.rm = TRUE),
+    max_abs_adjusted_win_rate_diff = max(abs(adjusted_win_rate_diff), na.rm = TRUE)
+  ) |>
+  knitr::kable(
+    caption = "Table 2 - Maximum absolute recomputation differences."
+  )
+```
+
+# Scenario-level summary across seeds
+
+```{r scenario-summary}
+scenario_win_summary <- win_metrics |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    eval_split
+  ) |>
+  summarise(
+    n_seeds = n_distinct(seed),
+    seeds = paste(sort(unique(seed)), collapse = ", "),
+    total_judgments = sum(n_judgments, na.rm = TRUE),
+    total_valid_judgments = sum(valid_judgments, na.rm = TRUE),
+    total_wins = sum(wins, na.rm = TRUE),
+    total_losses = sum(losses, na.rm = TRUE),
+    total_ties = sum(ties, na.rm = TRUE),
+
+    mean_win_rate = mean(win_rate, na.rm = TRUE),
+    mean_loss_rate = mean(loss_rate, na.rm = TRUE),
+    mean_tie_rate = mean(tie_rate, na.rm = TRUE),
+    mean_adjusted_win_rate = mean(adjusted_win_rate, na.rm = TRUE),
+    sd_adjusted_win_rate = safe_sd(adjusted_win_rate),
+    sem_adjusted_win_rate = safe_sem(adjusted_win_rate),
+    tcrit_95 = safe_tcrit(n_distinct(seed)),
+    ci95_low_adjusted_win_rate = mean_adjusted_win_rate - tcrit_95 * sem_adjusted_win_rate,
+    ci95_high_adjusted_win_rate = mean_adjusted_win_rate + tcrit_95 * sem_adjusted_win_rate,
+    mean_non_tie_win_rate = mean(non_tie_win_rate, na.rm = TRUE),
+    mean_net_win_rate = mean(net_win_rate, na.rm = TRUE),
+    mean_invalid_judgment_rate = mean(invalid_judgment_rate, na.rm = TRUE),
+
+    weighted_win_rate = if_else(total_valid_judgments > 0, total_wins / total_valid_judgments, NA_real_),
+    weighted_loss_rate = if_else(total_valid_judgments > 0, total_losses / total_valid_judgments, NA_real_),
+    weighted_tie_rate = if_else(total_valid_judgments > 0, total_ties / total_valid_judgments, NA_real_),
+    weighted_adjusted_win_rate = if_else(
+      total_valid_judgments > 0,
+      (total_wins + 0.5 * total_ties) / total_valid_judgments,
+      NA_real_
+    ),
+    weighted_non_tie_win_rate = if_else(
+      total_wins + total_losses > 0,
+      total_wins / (total_wins + total_losses),
+      NA_real_
+    ),
+    weighted_net_win_rate = weighted_win_rate - weighted_loss_rate,
+    .groups = "drop"
+  ) |>
+  mutate(
+    adjusted_win_rate_delta_from_parity = weighted_adjusted_win_rate - 0.5,
+    preference_direction = case_when(
+      weighted_adjusted_win_rate > 0.5 ~ "Defended preferred",
+      weighted_adjusted_win_rate < 0.5 ~ "C0 preferred",
+      TRUE ~ "Parity"
+    )
+  ) |>
+  sort_scenarios()
+
+write_win_csv(scenario_win_summary, "03_scenario_win_rate_summary.csv")
+
+scenario_win_summary |>
+  select(
+    scenario_short,
+    eval_split,
+    n_seeds,
+    seeds,
+    total_valid_judgments,
+    total_wins,
+    total_losses,
+    total_ties,
+    weighted_win_rate,
+    weighted_loss_rate,
+    weighted_tie_rate,
+    weighted_adjusted_win_rate,
+    weighted_non_tie_win_rate,
+    weighted_net_win_rate,
+    mean_invalid_judgment_rate,
+    preference_direction
+  ) |>
+  mutate(
+    across(
+      c(
+        weighted_win_rate,
+        weighted_loss_rate,
+        weighted_tie_rate,
+        weighted_adjusted_win_rate,
+        weighted_non_tie_win_rate,
+        weighted_net_win_rate,
+        mean_invalid_judgment_rate
+      ),
+      ~ fmt_pct(.x)
+    )
+  ) |>
+  knitr::kable(
+    caption = "Table 3 - Scenario-level win-rate summary."
+  )
+```
+
+# Judge-level rows
+
+```{r load-judgments}
+judgments_path <- file.path(PAIRWISE_DIR, "win_rate_judgments.jsonl")
+judgments <- read_jsonl_file(judgments_path, bad_lines_filename = "00_bad_win_rate_judgment_lines.csv")
+
+if (is.null(judgments)) {
+  cat("win_rate_judgments.jsonl not found. Row-level sections will be skipped.")
+} else {
+  judgments <- judgments |>
+    rename(
+      scenario_id = defended_scenario_id,
+      seed = defended_seed
+    ) |>
+    add_scenario_info(id_col = "scenario_id", label_col = "defended_scenario_label") |>
+    mutate(
+      seed = as.integer(seed),
+      eval_split = as.character(eval_split),
+      task_name = as.character(task_name),
+      attack_type = ifelse(is.na(attack_type) | attack_type == "", "clean", as.character(attack_type)),
+      judge_decision = as.character(judge_decision),
+      judge_valid_decision = to_logical_safe(judge_valid_decision),
+      reference_wins = to_logical_safe(reference_wins),
+      defended_wins = to_logical_safe(defended_wins),
+      tie = to_logical_safe(tie),
+      valid_preference_score = case_when(
+        judge_valid_decision & defended_wins ~ 1,
+        judge_valid_decision & tie ~ 0.5,
+        judge_valid_decision & reference_wins ~ 0,
+        TRUE ~ NA_real_
+      ),
+      defended_win_int = as.integer(judge_valid_decision & defended_wins),
+      reference_win_int = as.integer(judge_valid_decision & reference_wins),
+      tie_int = as.integer(judge_valid_decision & tie),
+      valid_judgment_int = as.integer(judge_valid_decision)
+    ) |>
+    sort_scenarios()
+
+  write_win_csv(
+    judgments |>
+      select(
+        eval_split,
+        example_id,
+        task_name,
+        attack_type,
+        reference_scenario_id,
+        reference_seed,
+        scenario_id,
+        scenario_short,
+        seed,
+        expected_answer,
+        attack_target,
+        judge_model_id,
+        judge_decision,
+        judge_valid_decision,
+        reference_wins,
+        defended_wins,
+        tie,
+        valid_preference_score
+      ),
+    "04_win_rate_judgments_compact.csv"
+  )
+
+  judgments |>
+    count(scenario_short, seed, eval_split, judge_decision, name = "n") |>
+    knitr::kable(
+      caption = "Table 4 - Judge decision distribution by scenario and seed."
+    )
+}
+```
+
+# Recompute metrics from judge-level rows
+
+```{r recompute-from-judgments}
+if (exists("judgments") && !is.null(judgments)) {
+  recomputed_from_judgments <- judgments |>
+    group_by(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      seed,
+      eval_split
+    ) |>
+    summarise(
+      n_judgments = n(),
+      valid_judgments = sum(valid_judgment_int, na.rm = TRUE),
+      wins = sum(defended_win_int, na.rm = TRUE),
+      losses = sum(reference_win_int, na.rm = TRUE),
+      ties = sum(tie_int, na.rm = TRUE),
+      valid_judgment_rate = valid_judgments / n_judgments,
+      win_rate = wins / valid_judgments,
+      loss_rate = losses / valid_judgments,
+      tie_rate = ties / valid_judgments,
+      adjusted_win_rate = (wins + 0.5 * ties) / valid_judgments,
+      invalid_judgment_rate = 1 - valid_judgment_rate,
+      non_tie_judgments = wins + losses,
+      non_tie_win_rate = if_else(non_tie_judgments > 0, wins / non_tie_judgments, NA_real_),
+      net_win_rate = win_rate - loss_rate,
+      .groups = "drop"
+    ) |>
+    sort_scenarios()
+
+  write_win_csv(recomputed_from_judgments, "05_recomputed_win_rate_from_judgments.csv")
+
+  comparison_with_metrics <- recomputed_from_judgments |>
+    select(
+      scenario_id,
+      seed,
+      eval_split,
+      adjusted_win_rate_recomputed_rows = adjusted_win_rate,
+      win_rate_recomputed_rows = win_rate,
+      loss_rate_recomputed_rows = loss_rate,
+      tie_rate_recomputed_rows = tie_rate
+    ) |>
+    left_join(
+      win_metrics |>
+        select(
+          scenario_id,
+          seed,
+          eval_split,
+          adjusted_win_rate,
+          win_rate,
+          loss_rate,
+          tie_rate
+        ),
+      by = c("scenario_id", "seed", "eval_split")
+    ) |>
+    mutate(
+      adjusted_diff = adjusted_win_rate_recomputed_rows - adjusted_win_rate,
+      win_rate_diff = win_rate_recomputed_rows - win_rate,
+      loss_rate_diff = loss_rate_recomputed_rows - loss_rate,
+      tie_rate_diff = tie_rate_recomputed_rows - tie_rate
+    )
+
+  write_win_csv(comparison_with_metrics, "06_judgment_recomputation_vs_metrics.csv")
+
+  comparison_with_metrics |>
+    summarise(
+      max_abs_adjusted_diff = max(abs(adjusted_diff), na.rm = TRUE),
+      max_abs_win_rate_diff = max(abs(win_rate_diff), na.rm = TRUE),
+      max_abs_loss_rate_diff = max(abs(loss_rate_diff), na.rm = TRUE),
+      max_abs_tie_rate_diff = max(abs(tie_rate_diff), na.rm = TRUE)
+    ) |>
+    knitr::kable(
+      caption = "Table 5 - Validation of judgment-level recomputation."
+    )
+}
+```
+
+# Wilson intervals and sign test for non-tie preferences
+
+The adjusted win rate includes ties as half a win. For direct preference among non-tie decisions, we also analyze:
+
+\[
+NonTieWinRate = \frac{wins}{wins + losses}
+\]
+
+This asks: when the judge did not tie, how often did the defended scenario beat C0?
+
+```{r non-tie-wilson-sign-test}
+non_tie_inference <- win_metrics |>
+  mutate(
+    non_tie_judgments = wins + losses
+  ) |>
+  rowwise() |>
+  mutate(
+    wilson = list(wilson_ci(wins, non_tie_judgments, conf.level = 0.95))
+  ) |>
+  unnest(wilson) |>
+  ungroup() |>
+  rename(
+    non_tie_win_rate_wilson = estimate,
+    non_tie_win_rate_ci_low = ci_low,
+    non_tie_win_rate_ci_high = ci_high
+  ) |>
+  mutate(
+    sign_test_p_value_greater_than_parity = purrr::map2_dbl(
+      wins,
+      non_tie_judgments,
+      ~ safe_binom_p(.x, .y, p = 0.5, alternative = "greater")
+    ),
+    sign_test_p_value_less_than_parity = purrr::map2_dbl(
+      wins,
+      non_tie_judgments,
+      ~ safe_binom_p(.x, .y, p = 0.5, alternative = "less")
+    ),
+    significant_defended_preferred_05 = !is.na(sign_test_p_value_greater_than_parity) &
+      sign_test_p_value_greater_than_parity < 0.05,
+    significant_c0_preferred_05 = !is.na(sign_test_p_value_less_than_parity) &
+      sign_test_p_value_less_than_parity < 0.05
+  ) |>
+  sort_scenarios()
+
+write_win_csv(non_tie_inference, "07_non_tie_preference_wilson_and_sign_test.csv")
+
+non_tie_inference |>
+  select(
+    scenario_short,
+    seed,
+    eval_split,
+    wins,
+    losses,
+    ties,
+    non_tie_judgments,
+    non_tie_win_rate,
+    non_tie_win_rate_ci_low,
+    non_tie_win_rate_ci_high,
+    sign_test_p_value_greater_than_parity,
+    sign_test_p_value_less_than_parity
+  ) |>
+  mutate(
+    across(
+      c(non_tie_win_rate, non_tie_win_rate_ci_low, non_tie_win_rate_ci_high),
+      ~ fmt_pct(.x)
+    ),
+    sign_test_p_value_greater_than_parity = scales::pvalue(sign_test_p_value_greater_than_parity, accuracy = 0.001),
+    sign_test_p_value_less_than_parity = scales::pvalue(sign_test_p_value_less_than_parity, accuracy = 0.001)
+  ) |>
+  knitr::kable(
+    caption = "Table 6 - Non-tie preference Wilson intervals and sign tests."
+  )
+```
+
+# Task-level win-rate analysis
+
+```{r task-level-analysis}
+if (exists("judgments") && !is.null(judgments)) {
+  win_rate_by_task <- judgments |>
+    group_by(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      seed,
+      eval_split,
+      task_name
+    ) |>
+    summarise(
+      n_judgments = n(),
+      valid_judgments = sum(valid_judgment_int, na.rm = TRUE),
+      wins = sum(defended_win_int, na.rm = TRUE),
+      losses = sum(reference_win_int, na.rm = TRUE),
+      ties = sum(tie_int, na.rm = TRUE),
+      win_rate = wins / valid_judgments,
+      loss_rate = losses / valid_judgments,
+      tie_rate = ties / valid_judgments,
+      adjusted_win_rate = (wins + 0.5 * ties) / valid_judgments,
+      non_tie_judgments = wins + losses,
+      non_tie_win_rate = if_else(non_tie_judgments > 0, wins / non_tie_judgments, NA_real_),
+      net_win_rate = win_rate - loss_rate,
+      invalid_judgment_rate = 1 - valid_judgments / n_judgments,
+      .groups = "drop"
+    ) |>
+    sort_scenarios()
+
+  task_summary <- win_rate_by_task |>
+    group_by(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      eval_split,
+      task_name
+    ) |>
+    summarise(
+      n_seeds = n_distinct(seed),
+      total_valid_judgments = sum(valid_judgments, na.rm = TRUE),
+      total_wins = sum(wins, na.rm = TRUE),
+      total_losses = sum(losses, na.rm = TRUE),
+      total_ties = sum(ties, na.rm = TRUE),
+      weighted_win_rate = total_wins / total_valid_judgments,
+      weighted_loss_rate = total_losses / total_valid_judgments,
+      weighted_tie_rate = total_ties / total_valid_judgments,
+      weighted_adjusted_win_rate = (total_wins + 0.5 * total_ties) / total_valid_judgments,
+      weighted_net_win_rate = weighted_win_rate - weighted_loss_rate,
+      mean_adjusted_win_rate = mean(adjusted_win_rate, na.rm = TRUE),
+      sd_adjusted_win_rate = safe_sd(adjusted_win_rate),
+      .groups = "drop"
+    ) |>
+    sort_scenarios()
+
+  write_win_csv(win_rate_by_task, "08_win_rate_by_task_seed.csv")
+  write_win_csv(task_summary, "09_win_rate_by_task_summary.csv")
+
+  task_summary |>
+    select(
+      scenario_short,
+      task_name,
+      total_valid_judgments,
+      total_wins,
+      total_losses,
+      total_ties,
+      weighted_adjusted_win_rate,
+      weighted_net_win_rate
+    ) |>
+    mutate(
+      weighted_adjusted_win_rate = fmt_pct(weighted_adjusted_win_rate),
+      weighted_net_win_rate = fmt_pct(weighted_net_win_rate)
+    ) |>
+    arrange(scenario_short, task_name) |>
+    knitr::kable(
+      caption = "Table 7 - Task-level adjusted win rate summary."
+    )
+}
+```
+
+# Qualitative examples of wins and losses
+
+```{r qualitative-examples}
+if (exists("judgments") && !is.null(judgments)) {
+  qualitative_examples <- judgments |>
+    filter(judge_valid_decision) |>
+    mutate(
+      outcome = case_when(
+        defended_wins ~ "defended_win",
+        reference_wins ~ "c0_win",
+        tie ~ "tie",
+        TRUE ~ "other"
+      )
+    ) |>
+    group_by(scenario_short, seed, outcome) |>
+    slice_head(n = 5) |>
+    ungroup() |>
+    select(
+      scenario_short,
+      seed,
+      outcome,
+      task_name,
+      example_id,
+      expected_answer,
+      reference_normalized_output,
+      defended_normalized_output,
+      judge_decision
+    )
+
+  write_win_csv(qualitative_examples, "10_qualitative_win_loss_examples.csv")
+
+  qualitative_examples |>
+    knitr::kable(
+      caption = "Table 8 - Small qualitative sample of judged wins, losses, and ties."
+    )
+}
+```
+
+# Figures
+
+## Adjusted win rate by seed
+
+```{r fig-adjusted-win-rate, fig.width=10.5, fig.height=6}
+p_adjusted <- win_metrics |>
+  ggplot(aes(x = scenario_short, y = adjusted_win_rate, color = scenario_short)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey45") +
+  geom_point(
+    aes(shape = factor(seed)),
+    size = 3.2,
+    position = position_jitter(width = 0.08, height = 0)
+  ) +
+  stat_summary(
+    fun = mean,
+    geom = "crossbar",
+    width = 0.42,
+    color = "black",
+    linewidth = 0.35
+  ) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Adjusted win rate vs C0",
+    subtitle = "Dashed line marks parity with C0. Each point is one seed.",
+    x = "Scenario",
+    y = "Adjusted win rate",
+    color = "Scenario",
+    shape = "Seed"
+  ) +
+  base_theme()
+
+print(p_adjusted)
+
+save_win_figure(
+  p_adjusted,
+  "01_adjusted_win_rate_by_seed.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Win, loss, tie composition
+
+```{r fig-composition, fig.width=10.5, fig.height=6}
+composition_long <- scenario_win_summary |>
+  select(
+    scenario_short,
+    weighted_win_rate,
+    weighted_loss_rate,
+    weighted_tie_rate
+  ) |>
+  pivot_longer(
+    cols = c(weighted_win_rate, weighted_loss_rate, weighted_tie_rate),
+    names_to = "component",
+    values_to = "rate"
+  ) |>
+  mutate(
+    component = recode(
+      component,
+      weighted_win_rate = "Wins",
+      weighted_loss_rate = "Losses",
+      weighted_tie_rate = "Ties"
+    ),
+    component = factor(component, levels = c("Losses", "Ties", "Wins"))
+  )
+
+p_composition <- composition_long |>
+  ggplot(aes(x = scenario_short, y = rate, fill = component)) +
+  geom_col(width = 0.72) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Win/loss/tie composition vs C0",
+    subtitle = "Rates are weighted across available seeds by valid judgments.",
+    x = "Scenario",
+    y = "Share of valid judgments",
+    fill = "Judgment"
+  ) +
+  base_theme()
+
+print(p_composition)
+
+save_win_figure(
+  p_composition,
+  "02_win_loss_tie_composition.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Non-tie preference rate
+
+```{r fig-non-tie, fig.width=10.5, fig.height=6}
+p_non_tie <- non_tie_inference |>
+  ggplot(aes(x = scenario_short, y = non_tie_win_rate, color = scenario_short)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey45") +
+  geom_errorbar(
+    aes(ymin = non_tie_win_rate_ci_low, ymax = non_tie_win_rate_ci_high),
+    width = 0.13,
+    linewidth = 0.7,
+    show.legend = FALSE
+  ) +
+  geom_point(
+    aes(shape = factor(seed)),
+    size = 3.1
+  ) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(0, 1)) +
+  labs(
+    title = "Non-tie win rate vs C0",
+    subtitle = "Among non-tie decisions only. Error bars are Wilson intervals.",
+    x = "Scenario",
+    y = "Wins / (wins + losses)",
+    color = "Scenario",
+    shape = "Seed"
+  ) +
+  base_theme()
+
+print(p_non_tie)
+
+save_win_figure(
+  p_non_tie,
+  "03_non_tie_win_rate_wilson.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Net win rate
+
+```{r fig-net-win-rate, fig.width=10, fig.height=6}
+p_net <- scenario_win_summary |>
+  ggplot(aes(x = scenario_short, y = weighted_net_win_rate, fill = scenario_short)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey45") +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Net win rate vs C0",
+    subtitle = "Net win rate = win_rate - loss_rate. Positive means more wins than losses.",
+    x = "Scenario",
+    y = "Net win rate"
+  ) +
+  base_theme()
+
+print(p_net)
+
+save_win_figure(
+  p_net,
+  "04_net_win_rate.png",
+  width = 10,
+  height = 6
+)
+```
+
+## Invalid judgment rate
+
+```{r fig-invalid-judgments, fig.width=10, fig.height=5.5}
+p_invalid <- win_metrics |>
+  ggplot(aes(x = scenario_short, y = invalid_judgment_rate, color = scenario_short)) +
+  geom_point(
+    aes(shape = factor(seed)),
+    size = 3.2,
+    position = position_jitter(width = 0.08, height = 0)
+  ) +
+  stat_summary(
+    fun = mean,
+    geom = "crossbar",
+    width = 0.42,
+    color = "black",
+    linewidth = 0.35
+  ) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+  labs(
+    title = "Invalid judgment rate",
+    subtitle = "Share of pairwise judgments not parsed as a valid judge decision.",
+    x = "Scenario",
+    y = "Invalid judgment rate",
+    color = "Scenario",
+    shape = "Seed"
+  ) +
+  base_theme()
+
+print(p_invalid)
+
+save_win_figure(
+  p_invalid,
+  "05_invalid_judgment_rate.png",
+  width = 10,
+  height = 5.5
+)
+```
+
+## Task-level heatmap
+
+```{r fig-task-heatmap, fig.width=11, fig.height=7}
+if (exists("task_summary")) {
+  p_task_heatmap <- task_summary |>
+    ggplot(aes(x = scenario_short, y = fct_rev(factor(task_name)), fill = weighted_adjusted_win_rate)) +
+    geom_tile(color = "white", linewidth = 0.35) +
+    geom_text(aes(label = scales::percent(weighted_adjusted_win_rate, accuracy = 1)), size = 3) +
+    scale_fill_gradient2(
+      low = "#B2182B",
+      mid = "white",
+      high = "#2166AC",
+      midpoint = 0.5,
+      labels = scales::percent_format(accuracy = 1)
+    ) +
+    labs(
+      title = "Task-level adjusted win rate",
+      subtitle = "Blue means above parity with C0; red means below parity.",
+      x = "Scenario",
+      y = "Task",
+      fill = "Adjusted win rate"
+    ) +
+    base_theme()
+
+  print(p_task_heatmap)
+
+  save_win_figure(
+    p_task_heatmap,
+    "06_task_adjusted_win_rate_heatmap.png",
+    width = 11,
+    height = 7
+  )
+}
+```
+
+## Task-level net win rate heatmap
+
+```{r fig-task-net-heatmap, fig.width=11, fig.height=7}
+if (exists("task_summary")) {
+  p_task_net_heatmap <- task_summary |>
+    ggplot(aes(x = scenario_short, y = fct_rev(factor(task_name)), fill = weighted_net_win_rate)) +
+    geom_tile(color = "white", linewidth = 0.35) +
+    geom_text(aes(label = scales::percent(weighted_net_win_rate, accuracy = 1)), size = 3) +
+    scale_fill_gradient2(
+      low = "#B2182B",
+      mid = "white",
+      high = "#2166AC",
+      midpoint = 0,
+      labels = scales::percent_format(accuracy = 1)
+    ) +
+    labs(
+      title = "Task-level net win rate",
+      subtitle = "Net win rate = win_rate - loss_rate.",
+      x = "Scenario",
+      y = "Task",
+      fill = "Net win rate"
+    ) +
+    base_theme()
+
+  print(p_task_net_heatmap)
+
+  save_win_figure(
+    p_task_net_heatmap,
+    "07_task_net_win_rate_heatmap.png",
+    width = 11,
+    height = 7
+  )
+}
+```
+
+# Main paper-ready table
+
+```{r paper-ready-table}
+paper_win_table <- scenario_win_summary |>
+  select(
+    scenario_short,
+    n_seeds,
+    total_valid_judgments,
+    total_wins,
+    total_losses,
+    total_ties,
+    weighted_win_rate,
+    weighted_loss_rate,
+    weighted_tie_rate,
+    weighted_adjusted_win_rate,
+    weighted_non_tie_win_rate,
+    weighted_net_win_rate,
+    mean_invalid_judgment_rate,
+    preference_direction
+  ) |>
+  mutate(
+    across(
+      c(
+        weighted_win_rate,
+        weighted_loss_rate,
+        weighted_tie_rate,
+        weighted_adjusted_win_rate,
+        weighted_non_tie_win_rate,
+        weighted_net_win_rate,
+        mean_invalid_judgment_rate
+      ),
+      ~ fmt_pct(.x)
+    )
+  )
+
+write_win_csv(paper_win_table, "11_paper_ready_win_rate_table.csv")
+
+paper_win_table |>
+  knitr::kable(
+    caption = "Table 9 - Paper-ready win-rate table."
+  )
+```
+
+# Methodological notes
+
+```{r methodological-notes, results='asis'}
+cat("
+## How to interpret this analysis
+
+The win-rate analysis is a judged preference analysis. It should not be interpreted as task accuracy.
+
+The adjusted win rate gives half credit to ties and compares defended outputs against the C0 reference outputs. A value below 50% means the judge preferred C0 on average. A value above 50% means the defended scenario was preferred on average.
+
+Because the judge produced many ties in this experiment, adjusted win rate and non-tie win rate answer different questions. Adjusted win rate preserves ties as partial parity. Non-tie win rate removes ties and focuses only on direct preferences.
+
+The sign test over non-tie judgments tests whether defended wins are more common than reference wins among non-tie decisions. This is useful when the adjusted win rate is close to parity but the non-tie decisions lean strongly toward one side.
+
+For C2, C3, and C4, seed-level variation is also summarized. C1 has only one seed, so there is no seed-level uncertainty to estimate for C1.
+")
+```
+
+# Generated files
+
+Tables are saved in:
+
+```text
+tables/win_rate_analysis/
+```
+
+Figures are saved in:
+
+```text
+figures/win_rate_analysis/
+```
+
+Main files:
+
+```text
+01_win_rate_metrics_enriched.csv
+02_win_rate_recomputation_validation.csv
+03_scenario_win_rate_summary.csv
+04_win_rate_judgments_compact.csv
+05_recomputed_win_rate_from_judgments.csv
+06_judgment_recomputation_vs_metrics.csv
+07_non_tie_preference_wilson_and_sign_test.csv
+08_win_rate_by_task_seed.csv
+09_win_rate_by_task_summary.csv
+10_qualitative_win_loss_examples.csv
+11_paper_ready_win_rate_table.csv
+
+01_adjusted_win_rate_by_seed.png
+02_win_loss_tie_composition.png
+03_non_tie_win_rate_wilson.png
+04_net_win_rate.png
+05_invalid_judgment_rate.png
+06_task_adjusted_win_rate_heatmap.png
+07_task_net_win_rate_heatmap.png
+```

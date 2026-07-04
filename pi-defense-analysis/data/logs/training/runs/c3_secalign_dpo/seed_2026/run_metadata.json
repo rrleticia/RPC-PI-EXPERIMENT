@@ -1,0 +1,21 @@
+{
+  "scenario": "c3_secalign_dpo",
+  "seed": 2026,
+  "method": "dpo",
+  "status": "completed",
+  "started_at_utc": "2026-06-29T17:52:15.524524+00:00",
+  "finished_at_utc": "2026-06-29T18:06:18.325934+00:00",
+  "output_dir": "/workspace/pi-defense-exp/adapters/secalign/seed_2026",
+  "run_log_dir": "/workspace/pi-defense-exp/logs/training/runs/c3_secalign_dpo/seed_2026",
+  "train_rows": 2100,
+  "validation_rows": 350,
+  "elapsed_seconds": 842.8013832569122,
+  "train_metrics": {
+    "train_runtime": 835.728,
+    "train_samples_per_second": 2.513,
+    "train_steps_per_second": 0.158,
+    "total_flos": 1.714527594283008e+16,
+    "train_loss": 0.04003917363865405,
+    "epoch": 1.0
+  }
+}

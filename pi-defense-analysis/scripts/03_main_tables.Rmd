@@ -1,0 +1,743 @@
+---
+title: "RPC-PI Experiment — Main Tables"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center"
+)
+
+options(knitr.kable.NA = "—")
+
+required_packages <- c(
+  "tidyverse",
+  "readr",
+  "knitr",
+  "stringr",
+  "tidyr",
+  "dplyr",
+  "fs",
+  "here"
+)
+
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(readr)
+library(knitr)
+library(stringr)
+library(tidyr)
+library(dplyr)
+library(fs)
+library(here)
+```
+
+# Objetivo
+
+Este relatório reúne as **tabelas principais** do experimento RPC-PI a partir das métricas já recomputadas no `01_descriptive_metrics.Rmd` e, quando necessário, dos arquivos originais em `data/results/`.
+
+A ideia é separar as tabelas que devem aparecer no relatório/artigo das tabelas auxiliares usadas somente para checagem.
+
+```{r paths}
+DATA_DIR <- here::here("data", "results")
+DESC_DIR <- here::here("tables", "descriptive")
+VALIDATION_DIR <- here::here("tables", "validation")
+OUT_DIR <- here::here("tables", "main")
+
+fs::dir_create(OUT_DIR)
+
+if (!dir.exists(DATA_DIR)) {
+  stop(
+    "Não encontrei data/results/. Extraia o ZIP primeiro com: ",
+    "unzip('results.zip', exdir = 'data')"
+  )
+}
+
+if (!dir.exists(DESC_DIR)) {
+  stop(
+    "Não encontrei tables/descriptive/. Rode primeiro o Rmd 01_descriptive_metrics.Rmd."
+  )
+}
+```
+
+# Funções auxiliares
+
+```{r helpers}
+read_first_existing <- function(paths, required = TRUE) {
+  existing <- paths[file.exists(paths)]
+
+  if (length(existing) == 0) {
+    if (required) {
+      stop("Nenhum destes arquivos foi encontrado:\n", paste(paths, collapse = "\n"))
+    }
+    return(NULL)
+  }
+
+  readr::read_csv(existing[[1]], show_col_types = FALSE)
+}
+
+col_or_na <- function(df, col) {
+  if (col %in% names(df)) {
+    df[[col]]
+  } else {
+    rep(NA_real_, nrow(df))
+  }
+}
+
+coalesce_col <- function(df, cols, default = NA_real_) {
+  existing <- cols[cols %in% names(df)]
+
+  if (length(existing) == 0) {
+    return(rep(default, nrow(df)))
+  }
+
+  out <- df[[existing[[1]]]]
+  if (length(existing) > 1) {
+    for (nm in existing[-1]) {
+      out <- dplyr::coalesce(out, df[[nm]])
+    }
+  }
+  out
+}
+
+scenario_order <- c(
+  "c0_base",
+  "c1_struq_format_only",
+  "c2_struq_sft",
+  "c3_secalign_dpo",
+  "c4_ih_sft"
+)
+
+scenario_short_map <- c(
+  c0_base = "C0",
+  c1_struq_format_only = "C1",
+  c2_struq_sft = "C2",
+  c3_secalign_dpo = "C3",
+  c4_ih_sft = "C4"
+)
+
+sort_scenarios <- function(df) {
+  df |>
+    mutate(scenario_id = factor(scenario_id, levels = scenario_order)) |>
+    arrange(scenario_id) |>
+    mutate(scenario_id = as.character(scenario_id))
+}
+
+fmt_pct <- function(x, digits = 2) {
+  ifelse(is.na(x), "—", sprintf(paste0("%.", digits, "f%%"), x * 100))
+}
+
+fmt_pp <- function(x, digits = 2) {
+  ifelse(is.na(x), "—", sprintf(paste0("%+.", digits, "f p.p."), x * 100))
+}
+
+fmt_num <- function(x, digits = 2) {
+  ifelse(is.na(x), "—", sprintf(paste0("%.", digits, "f"), x))
+}
+
+percentify <- function(df, cols) {
+  df |>
+    mutate(across(any_of(cols), ~ .x * 100))
+}
+
+write_main_csv <- function(df, filename) {
+  readr::write_csv(df, file.path(OUT_DIR, filename))
+  invisible(df)
+}
+```
+
+# Carregamento dos dados
+
+```{r load-data}
+scenario_level <- read_first_existing(c(
+  file.path(DESC_DIR, "07_scenario_level_metrics_recomputed.csv"),
+  file.path(DATA_DIR, "metrics", "full", "scenario_level_metrics.csv")
+)) |>
+  sort_scenarios()
+
+run_level <- read_first_existing(c(
+  file.path(DESC_DIR, "06_run_level_metrics_recomputed.csv"),
+  file.path(DATA_DIR, "metrics", "full", "run_level_metrics.csv")
+)) |>
+  sort_scenarios()
+
+failure_taxonomy_raw <- read_first_existing(c(
+  file.path(DESC_DIR, "10_failure_taxonomy_recomputed.csv"),
+  file.path(DATA_DIR, "error_analysis", "full", "tables", "failure_taxonomy_by_scenario_seed_split.csv")
+))
+
+metrics_by_attack_type_raw <- read_first_existing(c(
+  file.path(DESC_DIR, "12_metrics_by_attack_type_recomputed.csv"),
+  file.path(DATA_DIR, "error_analysis", "full", "tables", "error_rates_by_attack_type.csv"),
+  file.path(DATA_DIR, "metrics", "full", "attack_type_level_metrics.csv")
+))
+
+metrics_by_task_raw <- read_first_existing(c(
+  file.path(DESC_DIR, "11_metrics_by_task_recomputed.csv"),
+  file.path(DATA_DIR, "error_analysis", "full", "tables", "error_rates_by_task.csv"),
+  file.path(DATA_DIR, "metrics", "full", "task_level_metrics.csv")
+))
+
+seed_stability_original <- read_first_existing(c(
+  file.path(DATA_DIR, "statistical_analysis", "full", "seed_stability.csv")
+), required = FALSE)
+
+scenario_lookup <- scenario_level |>
+  distinct(scenario_id, scenario_label) |>
+  mutate(scenario_short = unname(scenario_short_map[scenario_id]))
+
+add_scenario_info <- function(df) {
+  joined <- df |>
+    left_join(scenario_lookup, by = "scenario_id", suffix = c("", "_lookup"))
+
+  if (!("scenario_label" %in% names(joined)) && "scenario_label_lookup" %in% names(joined)) {
+    joined <- joined |>
+      mutate(scenario_label = scenario_label_lookup)
+  }
+
+  if ("scenario_label_lookup" %in% names(joined)) {
+    joined <- joined |>
+      mutate(scenario_label = coalesce(as.character(scenario_label), as.character(scenario_label_lookup))) |>
+      select(-scenario_label_lookup)
+  }
+
+  joined
+}
+```
+
+# Tabela 1 — Resultados principais por cenário
+
+Esta é a tabela principal do relatório. Ela combina utilidade limpa, robustez sob ataque e métricas de seguimento da injeção.
+
+**Observação:** `utility_drop` foi calculado como `clean_accuracy(C0) - clean_accuracy(scenario)`. Portanto, valores negativos indicam que o cenário teve **maior acurácia limpa que o C0**.
+
+```{r main-scenario-table}
+main_scenario_results <- tibble(
+  scenario_id = scenario_level$scenario_id,
+  scenario_label = scenario_level$scenario_label,
+  n_seeds = col_or_na(scenario_level, "clean_accuracy_count"),
+  clean_accuracy = col_or_na(scenario_level, "clean_accuracy_mean"),
+  utility_drop = col_or_na(scenario_level, "utility_drop_mean"),
+  robust_accuracy_all_attacks = col_or_na(scenario_level, "robust_accuracy_all_attacks_mean"),
+  targeted_asr_all_attacks = col_or_na(scenario_level, "targeted_asr_all_attacks_mean"),
+  injection_following_rate_all_attacks = col_or_na(scenario_level, "injection_following_rate_all_attacks_mean"),
+  untargeted_asr_all_attacks = col_or_na(scenario_level, "untargeted_asr_all_attacks_mean"),
+  invalid_output_rate_all_attacks = col_or_na(scenario_level, "invalid_output_rate_all_attacks_mean")
+) |>
+  sort_scenarios()
+
+main_scenario_results_percent <- main_scenario_results |>
+  percentify(c(
+    "clean_accuracy",
+    "utility_drop",
+    "robust_accuracy_all_attacks",
+    "targeted_asr_all_attacks",
+    "injection_following_rate_all_attacks",
+    "untargeted_asr_all_attacks",
+    "invalid_output_rate_all_attacks"
+  ))
+
+write_main_csv(main_scenario_results, "01_main_scenario_results_fraction.csv")
+write_main_csv(main_scenario_results_percent, "01_main_scenario_results_percent.csv")
+
+main_scenario_results |>
+  transmute(
+    Scenario = scenario_label,
+    `N seeds` = n_seeds,
+    `Clean accuracy` = fmt_pct(clean_accuracy),
+    `Utility drop` = fmt_pp(utility_drop),
+    `Robust accuracy` = fmt_pct(robust_accuracy_all_attacks),
+    `Targeted ASR` = fmt_pct(targeted_asr_all_attacks),
+    `Injection following rate` = fmt_pct(injection_following_rate_all_attacks),
+    `Untargeted ASR` = fmt_pct(untargeted_asr_all_attacks),
+    `Invalid output rate` = fmt_pct(invalid_output_rate_all_attacks)
+  ) |>
+  knitr::kable(
+    caption = "Tabela 1 — Resultados principais por cenário.",
+    align = "lcccccccc"
+  )
+```
+
+# Tabela 2 — Ataques vistos vs. não vistos
+
+Esta tabela separa generalização em ataques `seen` e `unseen`. Para o relatório, ela é importante porque mostra se a defesa apenas memorizou padrões vistos no treinamento ou se generalizou para ataques não vistos.
+
+```{r seen-unseen-table}
+seen_vs_unseen <- tibble(
+  scenario_id = scenario_level$scenario_id,
+  scenario_label = scenario_level$scenario_label,
+  robust_accuracy_seen = col_or_na(scenario_level, "robust_accuracy_seen_mean"),
+  targeted_asr_seen = col_or_na(scenario_level, "targeted_asr_seen_mean"),
+  injection_following_rate_seen = col_or_na(scenario_level, "injection_following_rate_seen_mean"),
+  invalid_output_rate_seen = col_or_na(scenario_level, "invalid_output_rate_seen_mean"),
+  robust_accuracy_unseen = col_or_na(scenario_level, "robust_accuracy_unseen_mean"),
+  targeted_asr_unseen = col_or_na(scenario_level, "targeted_asr_unseen_mean"),
+  injection_following_rate_unseen = col_or_na(scenario_level, "injection_following_rate_unseen_mean"),
+  invalid_output_rate_unseen = col_or_na(scenario_level, "invalid_output_rate_unseen_mean")
+) |>
+  sort_scenarios()
+
+seen_vs_unseen_percent <- seen_vs_unseen |>
+  percentify(c(
+    "robust_accuracy_seen",
+    "targeted_asr_seen",
+    "injection_following_rate_seen",
+    "invalid_output_rate_seen",
+    "robust_accuracy_unseen",
+    "targeted_asr_unseen",
+    "injection_following_rate_unseen",
+    "invalid_output_rate_unseen"
+  ))
+
+write_main_csv(seen_vs_unseen, "02_seen_vs_unseen_fraction.csv")
+write_main_csv(seen_vs_unseen_percent, "02_seen_vs_unseen_percent.csv")
+
+seen_vs_unseen |>
+  transmute(
+    Scenario = scenario_label,
+    `Robust seen` = fmt_pct(robust_accuracy_seen),
+    `IFR seen` = fmt_pct(injection_following_rate_seen),
+    `Invalid seen` = fmt_pct(invalid_output_rate_seen),
+    `Robust unseen` = fmt_pct(robust_accuracy_unseen),
+    `IFR unseen` = fmt_pct(injection_following_rate_unseen),
+    `Invalid unseen` = fmt_pct(invalid_output_rate_unseen)
+  ) |>
+  knitr::kable(
+    caption = "Tabela 2 — Robustez e seguimento da injeção em ataques vistos e não vistos.",
+    align = "lcccccc"
+  )
+```
+
+# Tabela 3 — Resultados por seed nos modelos treinados
+
+Esta tabela mostra a variação por seed dos cenários treinados: C2, C3 e C4.
+
+```{r seed-level-table}
+seed_level_trained <- run_level |>
+  filter(scenario_id %in% c("c2_struq_sft", "c3_secalign_dpo", "c4_ih_sft")) |>
+  transmute(
+    scenario_id,
+    scenario_label,
+    seed,
+    clean_accuracy,
+    utility_drop,
+    robust_accuracy_all_attacks,
+    targeted_asr_all_attacks,
+    injection_following_rate_all_attacks = coalesce_col(
+      cur_data_all(),
+      c("injection_following_rate_all_attacks", "targeted_asr_all_attacks")
+    ),
+    invalid_output_rate_all_attacks
+  ) |>
+  sort_scenarios() |>
+  arrange(scenario_id, seed)
+
+seed_level_trained_percent <- seed_level_trained |>
+  percentify(c(
+    "clean_accuracy",
+    "utility_drop",
+    "robust_accuracy_all_attacks",
+    "targeted_asr_all_attacks",
+    "injection_following_rate_all_attacks",
+    "invalid_output_rate_all_attacks"
+  ))
+
+write_main_csv(seed_level_trained, "03_seed_level_trained_models_fraction.csv")
+write_main_csv(seed_level_trained_percent, "03_seed_level_trained_models_percent.csv")
+
+seed_level_trained |>
+  transmute(
+    Scenario = scenario_label,
+    Seed = seed,
+    `Clean accuracy` = fmt_pct(clean_accuracy),
+    `Utility drop` = fmt_pp(utility_drop),
+    `Robust accuracy` = fmt_pct(robust_accuracy_all_attacks),
+    `Targeted ASR` = fmt_pct(targeted_asr_all_attacks),
+    `Injection following rate` = fmt_pct(injection_following_rate_all_attacks),
+    `Invalid output rate` = fmt_pct(invalid_output_rate_all_attacks)
+  ) |>
+  knitr::kable(
+    caption = "Tabela 3 — Métricas por seed nos cenários treinados.",
+    align = "lccccccc"
+  )
+```
+
+# Tabela 4 — Estabilidade entre seeds
+
+Aqui resumimos a estabilidade dos cenários nas métricas principais. Para C0 e C1, que possuem apenas uma seed, `std` e `range` não devem ser lidos como evidência de estabilidade.
+
+```{r seed-stability-table}
+key_stability_metrics <- c(
+  "clean_accuracy",
+  "robust_accuracy_all_attacks",
+  "targeted_asr_all_attacks",
+  "injection_following_rate_all_attacks",
+  "untargeted_asr_all_attacks",
+  "invalid_output_rate_all_attacks",
+  "utility_drop"
+)
+
+safe_range <- function(x) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) return(NA_real_)
+  max(x) - min(x)
+}
+
+# A estabilidade é recomputada a partir da tabela por seed para manter
+# a Injection Following Rate explícita mesmo quando o arquivo original
+# não traz essa métrica nomeada separadamente.
+run_level_for_stability <- run_level |>
+  mutate(
+    injection_following_rate_all_attacks = dplyr::coalesce(
+      col_or_na(run_level, "injection_following_rate_all_attacks"),
+      col_or_na(run_level, "targeted_asr_all_attacks")
+    )
+  )
+
+seed_stability_key <- run_level_for_stability |>
+  select(
+    scenario_id,
+    scenario_label,
+    seed,
+    any_of(key_stability_metrics)
+  ) |>
+  pivot_longer(
+    cols = any_of(key_stability_metrics),
+    names_to = "metric",
+    values_to = "value"
+  ) |>
+  group_by(scenario_id, scenario_label, metric) |>
+  summarise(
+    n = sum(!is.na(value)),
+    mean = mean(value, na.rm = TRUE),
+    std = sd(value, na.rm = TRUE),
+    range = safe_range(value),
+    .groups = "drop"
+  ) |>
+  mutate(
+    direction = case_when(
+      metric %in% c(
+        "clean_accuracy",
+        "robust_accuracy_all_attacks"
+      ) ~ "higher",
+      TRUE ~ "lower"
+    ),
+    coefficient_of_variation = if_else(
+      is.na(mean) | is.na(std) | abs(mean) < .Machine$double.eps,
+      NA_real_,
+      std / abs(mean)
+    ),
+    mean = ifelse(is.nan(mean), NA_real_, mean),
+    std = ifelse(is.nan(std), NA_real_, std),
+    range = ifelse(is.nan(range) | is.infinite(range), NA_real_, range),
+    coefficient_of_variation = ifelse(
+      is.nan(coefficient_of_variation) | is.infinite(coefficient_of_variation),
+      NA_real_,
+      coefficient_of_variation
+    )
+  ) |>
+  relocate(direction, .after = metric) |>
+  sort_scenarios()
+
+seed_stability_key <- seed_stability_key |>
+  mutate(
+    metric_label = case_when(
+      metric == "clean_accuracy" ~ "Clean accuracy",
+      metric == "robust_accuracy_all_attacks" ~ "Robust accuracy",
+      metric == "targeted_asr_all_attacks" ~ "Targeted ASR",
+      metric == "injection_following_rate_all_attacks" ~ "Injection following rate",
+      metric == "untargeted_asr_all_attacks" ~ "Untargeted ASR",
+      metric == "invalid_output_rate_all_attacks" ~ "Invalid output rate",
+      metric == "utility_drop" ~ "Utility drop",
+      TRUE ~ metric
+    )
+  )
+
+seed_stability_key_percent <- seed_stability_key |>
+  mutate(
+    across(c(mean, std, range), ~ .x * 100)
+  )
+
+write_main_csv(seed_stability_key, "04_seed_stability_key_metrics_fraction.csv")
+write_main_csv(seed_stability_key_percent, "04_seed_stability_key_metrics_percent.csv")
+
+seed_stability_key |>
+  transmute(
+    Scenario = scenario_label,
+    Metric = metric_label,
+    Direction = direction,
+    `N seeds` = n,
+    Mean = fmt_pct(mean),
+    SD = fmt_pct(std),
+    Range = fmt_pct(range),
+    `Coeff. variation` = fmt_num(coefficient_of_variation, digits = 3)
+  ) |>
+  knitr::kable(
+    caption = "Tabela 4 — Estabilidade das principais métricas entre seeds.",
+    align = "lllccccc"
+  )
+```
+
+
+# Tabela 5 — Taxonomia de falhas sob ataque
+
+A taxonomia separa quatro resultados possíveis:
+
+- `correct`: o modelo preservou a tarefa legítima;
+- `followed_attack`: o modelo respondeu exatamente o alvo da injeção;
+- `wrong_other`: o modelo errou, mas não seguiu exatamente o alvo adversarial;
+- `invalid_output`: o modelo produziu saída inválida ou não normalizável.
+
+```{r failure-taxonomy-table}
+failure_taxonomy_labeled <- failure_taxonomy_raw |>
+  add_scenario_info()
+
+if ("eval_group" %in% names(failure_taxonomy_labeled)) {
+  failure_taxonomy_labeled <- failure_taxonomy_labeled |>
+    mutate(is_attacked = eval_group %in% c("attacked_seen", "attacked_unseen"))
+} else {
+  failure_taxonomy_labeled <- failure_taxonomy_labeled |>
+    mutate(is_attacked = eval_split %in% c("test_attacked_seen", "test_attacked_unseen"))
+}
+
+failure_taxonomy <- failure_taxonomy_labeled |>
+  filter(is_attacked) |>
+  group_by(scenario_id, scenario_label, failure_type) |>
+  summarise(count = sum(count, na.rm = TRUE), .groups = "drop") |>
+  group_by(scenario_id, scenario_label) |>
+  mutate(total = sum(count), rate = count / total) |>
+  ungroup() |>
+  complete(
+    nesting(scenario_id, scenario_label),
+    failure_type = c("correct", "followed_attack", "wrong_other", "invalid_output"),
+    fill = list(count = 0, rate = 0)
+  ) |>
+  group_by(scenario_id, scenario_label) |>
+  mutate(total = max(total, na.rm = TRUE)) |>
+  ungroup() |>
+  sort_scenarios()
+
+failure_taxonomy_wide <- failure_taxonomy |>
+  select(scenario_id, scenario_label, failure_type, rate) |>
+  pivot_wider(names_from = failure_type, values_from = rate, values_fill = 0) |>
+  sort_scenarios()
+
+failure_taxonomy_wide_percent <- failure_taxonomy_wide |>
+  percentify(c("correct", "followed_attack", "wrong_other", "invalid_output"))
+
+write_main_csv(failure_taxonomy_wide, "05_failure_taxonomy_attacks_fraction.csv")
+write_main_csv(failure_taxonomy_wide_percent, "05_failure_taxonomy_attacks_percent.csv")
+
+failure_taxonomy_wide |>
+  transmute(
+    Scenario = scenario_label,
+    Correct = fmt_pct(correct),
+    `Followed attack` = fmt_pct(followed_attack),
+    `Wrong other` = fmt_pct(wrong_other),
+    `Invalid output` = fmt_pct(invalid_output)
+  ) |>
+  knitr::kable(
+    caption = "Tabela 5 — Taxonomia de falhas considerando todos os exemplos atacados.",
+    align = "lcccc"
+  )
+```
+
+# Tabela 6 — Seguimento da injeção por tipo de ataque
+
+Esta tabela mostra a `Injection Following Rate` por tipo de ataque. Ela é útil para identificar quais ataques ainda são mais efetivos após treinamento.
+
+```{r attack-type-table}
+attack_type_metrics <- metrics_by_attack_type_raw |>
+  add_scenario_info() |>
+  mutate(
+    weight = coalesce_col(cur_data_all(), c("total", "n_examples"), default = 1),
+    attack_following_rate = coalesce_col(
+      cur_data_all(),
+      c("attack_following_rate", "targeted_asr", "injection_following_rate")
+    ),
+    error_rate = coalesce_col(cur_data_all(), c("error_rate", "untargeted_asr")),
+    correct_rate = coalesce_col(cur_data_all(), c("correct_rate", "robust_accuracy")),
+    invalid_output_rate = coalesce_col(cur_data_all(), c("invalid_output_rate"))
+  ) |>
+  group_by(scenario_id, scenario_label, attack_type) |>
+  summarise(
+    total = sum(weight, na.rm = TRUE),
+    injection_following_rate = weighted.mean(attack_following_rate, weight, na.rm = TRUE),
+    error_rate = weighted.mean(error_rate, weight, na.rm = TRUE),
+    correct_rate = weighted.mean(correct_rate, weight, na.rm = TRUE),
+    invalid_output_rate = weighted.mean(invalid_output_rate, weight, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  sort_scenarios()
+
+attack_type_ifr_wide <- attack_type_metrics |>
+  mutate(scenario_short = unname(scenario_short_map[scenario_id])) |>
+  select(attack_type, scenario_short, injection_following_rate) |>
+  pivot_wider(names_from = scenario_short, values_from = injection_following_rate) |>
+  arrange(desc(C0))
+
+attack_type_ifr_wide_percent <- attack_type_ifr_wide |>
+  percentify(intersect(c("C0", "C1", "C2", "C3", "C4"), names(attack_type_ifr_wide)))
+
+write_main_csv(attack_type_metrics, "06_attack_type_metrics_fraction.csv")
+write_main_csv(attack_type_ifr_wide, "06_attack_type_ifr_wide_fraction.csv")
+write_main_csv(attack_type_ifr_wide_percent, "06_attack_type_ifr_wide_percent.csv")
+
+attack_type_ifr_wide |>
+  transmute(
+    `Attack type` = attack_type,
+    C0 = fmt_pct(C0),
+    C1 = fmt_pct(C1),
+    C2 = fmt_pct(C2),
+    C3 = fmt_pct(C3),
+    C4 = fmt_pct(C4)
+  ) |>
+  knitr::kable(
+    caption = "Tabela 6 — Injection Following Rate por tipo de ataque.",
+    align = "lccccc"
+  )
+```
+
+# Tabela 7 — Erro por task sob ataque
+
+Esta tabela ranqueia as tasks pelo erro do C0 sob ataque e compara os cenários lado a lado.
+
+```{r task-table}
+task_metrics_labeled <- metrics_by_task_raw |>
+  add_scenario_info()
+
+if ("eval_group" %in% names(task_metrics_labeled)) {
+  task_metrics_labeled <- task_metrics_labeled |>
+    mutate(is_attacked = eval_group %in% c("attacked_seen", "attacked_unseen"))
+} else {
+  task_metrics_labeled <- task_metrics_labeled |>
+    mutate(is_attacked = eval_split %in% c("test_attacked_seen", "test_attacked_unseen"))
+}
+
+task_metrics <- task_metrics_labeled |>
+  mutate(
+    weight = coalesce_col(cur_data_all(), c("total", "n_examples"), default = 1),
+    attack_following_rate = coalesce_col(
+      cur_data_all(),
+      c("attack_following_rate", "targeted_asr", "injection_following_rate")
+    ),
+    error_rate = coalesce_col(cur_data_all(), c("error_rate", "untargeted_asr")),
+    correct_rate = coalesce_col(cur_data_all(), c("correct_rate", "robust_accuracy", "task_success_rate")),
+    invalid_output_rate = coalesce_col(cur_data_all(), c("invalid_output_rate"))
+  ) |>
+  filter(is_attacked) |>
+  group_by(scenario_id, scenario_label, task_name) |>
+  summarise(
+    total = sum(weight, na.rm = TRUE),
+    error_rate = weighted.mean(error_rate, weight, na.rm = TRUE),
+    correct_rate = weighted.mean(correct_rate, weight, na.rm = TRUE),
+    injection_following_rate = weighted.mean(attack_following_rate, weight, na.rm = TRUE),
+    invalid_output_rate = weighted.mean(invalid_output_rate, weight, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  sort_scenarios()
+
+task_error_wide <- task_metrics |>
+  mutate(scenario_short = unname(scenario_short_map[scenario_id])) |>
+  select(task_name, scenario_short, error_rate) |>
+  pivot_wider(names_from = scenario_short, values_from = error_rate) |>
+  arrange(desc(C0))
+
+task_error_wide_percent <- task_error_wide |>
+  percentify(intersect(c("C0", "C1", "C2", "C3", "C4"), names(task_error_wide)))
+
+write_main_csv(task_metrics, "07_task_metrics_attacks_fraction.csv")
+write_main_csv(task_error_wide, "07_task_error_wide_fraction.csv")
+write_main_csv(task_error_wide_percent, "07_task_error_wide_percent.csv")
+
+task_error_wide |>
+  transmute(
+    Task = task_name,
+    C0 = fmt_pct(C0),
+    C1 = fmt_pct(C1),
+    C2 = fmt_pct(C2),
+    C3 = fmt_pct(C3),
+    C4 = fmt_pct(C4)
+  ) |>
+  knitr::kable(
+    caption = "Tabela 7 — Error rate por task sob ataque, ordenado pelo erro do C0.",
+    align = "lccccc"
+  )
+```
+
+# Tabela 8 — Definições das métricas principais
+
+Esta tabela é metodológica. Ela pode ser usada diretamente na seção de métodos ou apêndice.
+
+```{r metric-definitions}
+metric_definitions <- tribble(
+  ~Metric, ~Formula, ~Direction, ~Interpretation,
+  "Clean accuracy", "mean(normalized_output == expected_answer) em test_clean", "Higher is better", "Utilidade do modelo em exemplos sem ataque.",
+  "Task success rate", "mean(normalized_output == expected_answer)", "Higher is better", "Taxa de respostas corretas em qualquer split.",
+  "Robust accuracy", "mean(normalized_output == expected_answer) em exemplos atacados", "Higher is better", "Preservação da tarefa legítima sob prompt injection.",
+  "Utility under attack", "robust_accuracy", "Higher is better", "Utilidade preservada quando o contexto contém injeção.",
+  "Untargeted ASR", "1 - robust_accuracy", "Lower is better", "Sucesso do ataque medido por qualquer erro na tarefa legítima.",
+  "Targeted ASR", "mean(normalized_output == attack_target)", "Lower is better", "Sucesso do ataque quando o modelo responde exatamente o alvo adversarial.",
+  "Injection Following Rate", "mean(normalized_output == attack_target)", "Lower is better", "Proporção de respostas que seguem explicitamente a instrução adversarial inserida no contexto.",
+  "Attack success rate", "mean(normalized_output == attack_target)", "Lower is better", "Equivalente operacional ao Targeted ASR neste setup.",
+  "Binary ASV", "mean(1[normalized_output == attack_target])", "Lower is better", "Versão binária da vulnerabilidade ao alvo adversarial.",
+  "Valid output rate", "mean(normalized_output is not missing)", "Higher is better", "Proporção de saídas normalizáveis para o label space.",
+  "Invalid output rate", "1 - valid_output_rate", "Lower is better", "Proporção de saídas inválidas ou não normalizáveis.",
+  "Utility drop", "clean_accuracy(C0) - clean_accuracy(scenario)", "Lower is better", "Valores negativos indicam ganho de utilidade em relação ao C0.",
+  "Clean effectiveness", "clean_accuracy(scenario) / clean_accuracy(C0)", "Higher is better", "Razão de utilidade limpa em relação ao modelo base.",
+  "Robust accuracy delta vs C0", "robust_accuracy(scenario) - robust_accuracy(C0)", "Higher is better", "Ganho de robustez em relação ao modelo base."
+)
+
+write_main_csv(metric_definitions, "08_metric_definitions.csv")
+
+metric_definitions |>
+  knitr::kable(
+    caption = "Tabela 8 — Definições das métricas principais.",
+    align = "llll"
+  )
+```
+
+# Checagem opcional da validação
+
+Se o `02_validate_metrics_against_outputs.Rmd` já foi executado, esta seção mostra um resumo da validação entre métricas recomputadas e métricas originais.
+
+```{r optional-validation}
+validation_summary_path <- file.path(VALIDATION_DIR, "04_validation_summary.csv")
+
+if (file.exists(validation_summary_path)) {
+  validation_summary <- readr::read_csv(validation_summary_path, show_col_types = FALSE)
+
+  validation_summary |>
+    knitr::kable(
+      caption = "Resumo da validação entre métricas recomputadas e métricas originais."
+    )
+} else {
+  cat("O arquivo tables/validation/04_validation_summary.csv não foi encontrado. Rode o Rmd 02 para preencher esta seção.")
+}
+```
+
+# Arquivos gerados
+
+```{r generated-files}
+main_files <- list.files(OUT_DIR, full.names = FALSE)
+
+tibble(file = main_files) |>
+  knitr::kable(
+    caption = "Arquivos CSV gerados por este Rmd em tables/main/."
+  )
+```

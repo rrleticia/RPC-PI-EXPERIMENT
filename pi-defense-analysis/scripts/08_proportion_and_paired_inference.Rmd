@@ -1,0 +1,1338 @@
+---
+title: "RPC-PI Experiment - Proportion and Paired Inference"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6,
+  dpi = 300
+)
+
+options(knitr.kable.NA = "-")
+
+# Defensive setting for Windows/RStudio sessions with non-UTF-8 graphics devices.
+try(Sys.setlocale("LC_CTYPE", "C"), silent = TRUE)
+
+required_packages <- c(
+  "tidyverse",
+  "readr",
+  "ggplot2",
+  "scales",
+  "stringr",
+  "forcats",
+  "fs",
+  "here",
+  "knitr"
+)
+
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(scales)
+library(stringr)
+library(forcats)
+library(fs)
+library(here)
+library(knitr)
+```
+
+# Objetivo
+
+Este R Markdown faz inferencia estatistica baseada em **proporcoes** e em **comparacoes pareadas contra C0**.
+
+Ele e diferente do `07_seed_confidence_intervals.Rmd`:
+
+- o Rmd 07 usa **seed/run** como unidade estatistica;
+- este Rmd usa **exemplo avaliado** como unidade para proporcoes e **exemplo pareado** como unidade para comparacoes contra C0.
+
+As analises incluidas sao:
+
+1. **Wilson interval** para proporcoes binarias;
+2. **teste binomial exato** para comparar proporcoes observadas contra uma referencia C0;
+3. **bootstrap pareado** para deltas contra C0;
+4. **teste binomial pareado/sign test** sobre pares discordantes contra C0.
+
+# Observacao metodologica
+
+As observacoes por exemplo nao sao perfeitamente independentes: ha agrupamento por task, tipo de ataque, split e seed. Por isso, os resultados deste Rmd devem ser lidos como uma inferencia mais adequada que normalidade simples, mas ainda com cautela. O bootstrap pareado abaixo usa estratificacao por seed/task/attack_type quando possivel.
+
+# Caminhos e configuracoes
+
+```{r paths-and-config}
+DATA_DIR <- here::here("data", "results")
+DESC_DIR <- here::here("tables", "descriptive")
+ERROR_TABLE_DIR <- file.path(DATA_DIR, "error_analysis", "full", "tables")
+
+OUT_TABLE_DIR <- here::here("tables", "proportion_and_paired_inference")
+OUT_FIG_DIR <- here::here("figures", "proportion_and_paired_inference")
+
+fs::dir_create(OUT_TABLE_DIR)
+fs::dir_create(OUT_FIG_DIR)
+
+if (!dir.exists(DATA_DIR)) {
+  stop(
+    "Nao encontrei data/results/. Extraia o ZIP primeiro com: ",
+    "unzip('results.zip', exdir = 'data')"
+  )
+}
+
+# Aumente para 2000 ou 5000 se quiser intervalos bootstrap finais mais estaveis.
+N_BOOTSTRAP <- 500
+BOOTSTRAP_SEED <- 42
+CONF_LEVEL <- 0.95
+
+set.seed(BOOTSTRAP_SEED)
+```
+
+# Funcoes auxiliares
+
+```{r helpers}
+read_first_existing <- function(paths, required = TRUE) {
+  existing <- paths[file.exists(paths)]
+
+  if (length(existing) == 0) {
+    if (required) {
+      stop("Nenhum destes arquivos foi encontrado:\n", paste(paths, collapse = "\n"))
+    }
+    return(NULL)
+  }
+
+  readr::read_csv(existing[[1]], show_col_types = FALSE)
+}
+
+scenario_order <- c(
+  "c0_base",
+  "c1_struq_format_only",
+  "c2_struq_sft",
+  "c3_secalign_dpo",
+  "c4_ih_sft"
+)
+
+scenario_labels <- tibble(
+  scenario_id = scenario_order,
+  scenario_short = c("C0", "C1", "C2", "C3", "C4"),
+  scenario_label = c(
+    "C0 - Base model",
+    "C1 - StruQ format-only",
+    "C2 - StruQ-like SFT",
+    "C3 - SecAlign-like DPO",
+    "C4 - Instruction-Hierarchy-like SFT"
+  )
+)
+
+scenario_palette <- c(
+  C0 = "#7F7F7F",
+  C1 = "#D55E00",
+  C2 = "#0072B2",
+  C3 = "#CC79A7",
+  C4 = "#009E73"
+)
+
+sort_scenarios <- function(df) {
+  df |>
+    mutate(
+      scenario_id = factor(scenario_id, levels = scenario_order),
+      scenario_short = factor(scenario_short, levels = c("C0", "C1", "C2", "C3", "C4"))
+    ) |>
+    arrange(scenario_id)
+}
+
+add_scenario_info <- function(df) {
+  out <- df |>
+    left_join(scenario_labels, by = "scenario_id", suffix = c("", "_lookup"))
+
+  if (!("scenario_label" %in% names(out))) {
+    out$scenario_label <- out$scenario_id
+  }
+
+  if ("scenario_label_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_label = coalesce(
+          as.character(scenario_label),
+          as.character(scenario_label_lookup)
+        )
+      )
+  }
+
+  if (!("scenario_short" %in% names(out))) {
+    out$scenario_short <- NA_character_
+  }
+
+  if ("scenario_short_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_short = coalesce(
+          as.character(scenario_short),
+          as.character(scenario_short_lookup)
+        )
+      )
+  }
+
+  out |>
+    mutate(
+      scenario_short = ifelse(
+        is.na(scenario_short),
+        recode(
+          as.character(scenario_id),
+          c0_base = "C0",
+          c1_struq_format_only = "C1",
+          c2_struq_sft = "C2",
+          c3_secalign_dpo = "C3",
+          c4_ih_sft = "C4",
+          .default = as.character(scenario_id)
+        ),
+        scenario_short
+      )
+    ) |>
+    select(-any_of(c("scenario_label_lookup", "scenario_short_lookup"))) |>
+    sort_scenarios()
+}
+
+to_logical_safe <- function(x) {
+  if (is.logical(x)) return(x)
+
+  x_chr <- tolower(as.character(x))
+
+  case_when(
+    x_chr %in% c("true", "t", "1", "yes") ~ TRUE,
+    x_chr %in% c("false", "f", "0", "no") ~ FALSE,
+    TRUE ~ NA
+  )
+}
+
+wilson_ci <- function(k, n, conf.level = 0.95) {
+  if (is.na(k) || is.na(n) || n <= 0) {
+    return(tibble(
+      estimate = NA_real_,
+      ci_low = NA_real_,
+      ci_high = NA_real_
+    ))
+  }
+
+  z <- qnorm(1 - (1 - conf.level) / 2)
+  p <- k / n
+  denom <- 1 + z^2 / n
+  center <- (p + z^2 / (2 * n)) / denom
+  half_width <- z * sqrt((p * (1 - p) / n) + (z^2 / (4 * n^2))) / denom
+
+  tibble(
+    estimate = p,
+    ci_low = max(0, center - half_width),
+    ci_high = min(1, center + half_width)
+  )
+}
+
+exact_binom_p <- function(k, n, p0, alternative = "two.sided") {
+  if (is.na(k) || is.na(n) || n <= 0 || is.na(p0)) {
+    return(NA_real_)
+  }
+
+  # Evita problemas numericos quando a referencia e exatamente 0 ou 1.
+  p0_adj <- min(max(p0, 1e-12), 1 - 1e-12)
+
+  out <- tryCatch(
+    binom.test(k, n, p = p0_adj, alternative = alternative)$p.value,
+    error = function(e) NA_real_
+  )
+
+  out
+}
+
+paired_binom_p <- function(better, discordant_pairs, alternative = "greater") {
+  if (
+    is.na(better) ||
+      is.na(discordant_pairs) ||
+      discordant_pairs <= 0 ||
+      better < 0 ||
+      better > discordant_pairs
+  ) {
+    return(NA_real_)
+  }
+
+  tryCatch(
+    binom.test(
+      x = as.integer(better),
+      n = as.integer(discordant_pairs),
+      p = 0.5,
+      alternative = alternative
+    )$p.value,
+    error = function(e) NA_real_
+  )
+}
+
+
+fmt_pct <- function(x, accuracy = 0.1) {
+  scales::percent(x, accuracy = accuracy)
+}
+
+base_theme <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      legend.position = "bottom",
+      plot.title.position = "plot",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey30"),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(face = "bold")
+    )
+}
+
+write_inf_csv <- function(df, filename) {
+  readr::write_csv(df, file.path(OUT_TABLE_DIR, filename))
+  invisible(df)
+}
+
+save_inf_figure <- function(plot, filename, width = 10, height = 6) {
+  ggsave(
+    file.path(OUT_FIG_DIR, filename),
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = 320,
+    bg = "white"
+  )
+  invisible(plot)
+}
+```
+
+# Metricas e direcoes
+
+```{r metric-definitions}
+metric_definitions <- tribble(
+  ~metric, ~metric_label, ~metric_group, ~direction,
+  "clean_accuracy", "Clean accuracy", "Accuracy", "higher",
+  "robust_accuracy", "Robust accuracy", "Accuracy", "higher",
+  "injection_following_rate", "Injection Following Rate", "Attack success", "lower",
+  "targeted_asr", "Targeted ASR", "Attack success", "lower",
+  "untargeted_asr", "Untargeted ASR", "Attack success", "lower",
+  "invalid_output_rate", "Invalid output rate", "Output validity", "lower"
+)
+
+write_inf_csv(metric_definitions, "01_metric_definitions.csv")
+
+metric_definitions |>
+  knitr::kable(
+    caption = "Tabela 1 - Metricas inferenciais e direcao de melhoria."
+  )
+```
+
+# Leitura dos exemplos individuais
+
+Este bloco usa a tabela compacta criada pelo `01_descriptive_metrics.Rmd`.
+
+```{r load-inference-compact}
+inference <- read_first_existing(c(
+  file.path(DESC_DIR, "01_inference_compact.csv")
+)) |>
+  add_scenario_info() |>
+  mutate(
+    seed = as.integer(seed),
+    eval_split = as.character(eval_split),
+    eval_group = case_when(
+      eval_split == "test_clean" ~ "clean",
+      eval_split == "test_attacked_seen" ~ "attacked_seen",
+      eval_split == "test_attacked_unseen" ~ "attacked_unseen",
+      TRUE ~ as.character(eval_group)
+    ),
+    is_attacked = eval_group %in% c("attacked_seen", "attacked_unseen"),
+    task_name = as.character(task_name),
+    attack_type = ifelse(is.na(attack_type) | attack_type == "", "clean", as.character(attack_type)),
+    is_correct_flag = to_logical_safe(is_correct_flag),
+    followed_attack_flag = to_logical_safe(followed_attack_flag),
+    invalid_output_flag = to_logical_safe(invalid_output_flag)
+  )
+
+coverage <- inference |>
+  group_by(scenario_id, scenario_short, scenario_label, seed, eval_split) |>
+  summarise(n_examples = n(), .groups = "drop") |>
+  sort_scenarios()
+
+write_inf_csv(coverage, "02_inference_coverage.csv")
+
+coverage |>
+  knitr::kable(
+    caption = "Tabela 2 - Cobertura dos exemplos usados na inferencia por proporcao."
+  )
+```
+
+# Wilson intervals para proporcoes
+
+```{r build-proportion-events}
+proportion_events <- bind_rows(
+  inference |>
+    filter(eval_group == "clean") |>
+    transmute(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      seed,
+      eval_split,
+      split_group = "clean",
+      task_name,
+      attack_type,
+      metric = "clean_accuracy",
+      event = is_correct_flag
+    ),
+
+  inference |>
+    filter(is_attacked) |>
+    transmute(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      seed,
+      eval_split,
+      split_group = case_when(
+        eval_group == "attacked_seen" ~ "seen",
+        eval_group == "attacked_unseen" ~ "unseen",
+        TRUE ~ "attacked"
+      ),
+      task_name,
+      attack_type,
+      metric = "robust_accuracy",
+      event = is_correct_flag
+    ),
+
+  inference |>
+    filter(is_attacked) |>
+    transmute(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      seed,
+      eval_split,
+      split_group = case_when(
+        eval_group == "attacked_seen" ~ "seen",
+        eval_group == "attacked_unseen" ~ "unseen",
+        TRUE ~ "attacked"
+      ),
+      task_name,
+      attack_type,
+      metric = "injection_following_rate",
+      event = followed_attack_flag
+    ),
+
+  inference |>
+    filter(is_attacked) |>
+    transmute(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      seed,
+      eval_split,
+      split_group = case_when(
+        eval_group == "attacked_seen" ~ "seen",
+        eval_group == "attacked_unseen" ~ "unseen",
+        TRUE ~ "attacked"
+      ),
+      task_name,
+      attack_type,
+      metric = "targeted_asr",
+      event = followed_attack_flag
+    ),
+
+  inference |>
+    filter(is_attacked) |>
+    transmute(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      seed,
+      eval_split,
+      split_group = case_when(
+        eval_group == "attacked_seen" ~ "seen",
+        eval_group == "attacked_unseen" ~ "unseen",
+        TRUE ~ "attacked"
+      ),
+      task_name,
+      attack_type,
+      metric = "untargeted_asr",
+      event = !is_correct_flag
+    ),
+
+  inference |>
+    transmute(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      seed,
+      eval_split,
+      split_group = case_when(
+        eval_group == "clean" ~ "clean",
+        eval_group == "attacked_seen" ~ "seen",
+        eval_group == "attacked_unseen" ~ "unseen",
+        TRUE ~ eval_group
+      ),
+      task_name,
+      attack_type,
+      metric = "invalid_output_rate",
+      event = invalid_output_flag
+    )
+) |>
+  filter(!is.na(event)) |>
+  mutate(
+    event_int = as.integer(event),
+    split_group = factor(split_group, levels = c("clean", "seen", "unseen", "all_attacks"))
+  ) |>
+  left_join(metric_definitions, by = "metric")
+
+write_inf_csv(proportion_events, "03_proportion_events_long.csv")
+
+proportion_events |>
+  count(metric, split_group, scenario_short, name = "n") |>
+  head(30) |>
+  knitr::kable(
+    caption = "Tabela 3 - Eventos binarios construidos para Wilson intervals."
+  )
+```
+
+```{r wilson-by-scenario-split}
+wilson_by_split <- proportion_events |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    metric,
+    metric_label,
+    metric_group,
+    direction,
+    split_group
+  ) |>
+  summarise(
+    n = n(),
+    k = sum(event_int),
+    .groups = "drop"
+  ) |>
+  rowwise() |>
+  mutate(
+    wilson = list(wilson_ci(k, n, conf.level = CONF_LEVEL))
+  ) |>
+  unnest(wilson) |>
+  ungroup() |>
+  sort_scenarios()
+
+wilson_all_attacks <- proportion_events |>
+  filter(split_group %in% c("seen", "unseen")) |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    metric,
+    metric_label,
+    metric_group,
+    direction
+  ) |>
+  summarise(
+    split_group = "all_attacks",
+    n = n(),
+    k = sum(event_int),
+    .groups = "drop"
+  ) |>
+  rowwise() |>
+  mutate(
+    wilson = list(wilson_ci(k, n, conf.level = CONF_LEVEL))
+  ) |>
+  unnest(wilson) |>
+  ungroup() |>
+  sort_scenarios()
+
+wilson_proportions <- bind_rows(wilson_by_split, wilson_all_attacks) |>
+  mutate(
+    split_group = factor(split_group, levels = c("clean", "seen", "unseen", "all_attacks"))
+  ) |>
+  arrange(scenario_id, metric, split_group)
+
+wilson_proportions_percent <- wilson_proportions |>
+  mutate(across(c(estimate, ci_low, ci_high), ~ .x * 100))
+
+write_inf_csv(wilson_proportions, "04_wilson_proportions_fraction.csv")
+write_inf_csv(wilson_proportions_percent, "04_wilson_proportions_percent.csv")
+
+wilson_proportions |>
+  filter(
+    metric %in% c(
+      "clean_accuracy",
+      "robust_accuracy",
+      "injection_following_rate",
+      "untargeted_asr",
+      "invalid_output_rate"
+    ),
+    split_group %in% c("clean", "all_attacks")
+  ) |>
+  select(
+    scenario_short,
+    metric_label,
+    split_group,
+    n,
+    k,
+    estimate,
+    ci_low,
+    ci_high
+  ) |>
+  mutate(across(c(estimate, ci_low, ci_high), ~ fmt_pct(.x))) |>
+  knitr::kable(
+    caption = "Tabela 4 - Wilson intervals para proporcoes principais."
+  )
+```
+
+```{r fig-wilson-main, fig.width=11, fig.height=7}
+wilson_plot_data <- wilson_proportions |>
+  filter(
+    metric %in% c(
+      "clean_accuracy",
+      "robust_accuracy",
+      "injection_following_rate",
+      "untargeted_asr",
+      "invalid_output_rate"
+    ),
+    split_group %in% c("clean", "all_attacks")
+  ) |>
+  mutate(
+    metric_label = factor(
+      metric_label,
+      levels = c(
+        "Clean accuracy",
+        "Robust accuracy",
+        "Injection Following Rate",
+        "Untargeted ASR",
+        "Invalid output rate"
+      )
+    ),
+    estimate_pct = estimate * 100,
+    ci_low_pct = ci_low * 100,
+    ci_high_pct = ci_high * 100
+  )
+
+p_wilson_main <- wilson_plot_data |>
+  ggplot(aes(x = scenario_short, y = estimate_pct, color = scenario_short)) +
+  geom_errorbar(
+    aes(ymin = ci_low_pct, ymax = ci_high_pct),
+    width = 0.13,
+    linewidth = 0.7,
+    show.legend = FALSE
+  ) +
+  geom_point(size = 3.2, show.legend = FALSE) +
+  facet_wrap(~ metric_label, scales = "free_y", ncol = 2) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Wilson intervals for main proportions",
+    subtitle = "Intervalos calculados sobre exemplos individuais. Eles nao sao intervalos entre seeds.",
+    x = "Scenario",
+    y = "Value (%)"
+  ) +
+  base_theme()
+
+print(p_wilson_main)
+
+save_inf_figure(
+  p_wilson_main,
+  "01_wilson_main_proportions.png",
+  width = 11,
+  height = 7
+)
+```
+
+# Wilson intervals por tipo de ataque e por task
+
+```{r wilson-by-attack-type-task}
+wilson_by_attack_type <- proportion_events |>
+  filter(split_group %in% c("seen", "unseen")) |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    metric,
+    metric_label,
+    metric_group,
+    direction,
+    attack_type
+  ) |>
+  summarise(
+    n = n(),
+    k = sum(event_int),
+    .groups = "drop"
+  ) |>
+  rowwise() |>
+  mutate(wilson = list(wilson_ci(k, n, conf.level = CONF_LEVEL))) |>
+  unnest(wilson) |>
+  ungroup() |>
+  sort_scenarios()
+
+wilson_by_task <- proportion_events |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    metric,
+    metric_label,
+    metric_group,
+    direction,
+    task_name
+  ) |>
+  summarise(
+    n = n(),
+    k = sum(event_int),
+    .groups = "drop"
+  ) |>
+  rowwise() |>
+  mutate(wilson = list(wilson_ci(k, n, conf.level = CONF_LEVEL))) |>
+  unnest(wilson) |>
+  ungroup() |>
+  sort_scenarios()
+
+write_inf_csv(wilson_by_attack_type, "05_wilson_by_attack_type_fraction.csv")
+write_inf_csv(wilson_by_task, "06_wilson_by_task_fraction.csv")
+
+wilson_by_attack_type |>
+  filter(metric == "injection_following_rate") |>
+  select(scenario_short, attack_type, n, k, estimate, ci_low, ci_high) |>
+  mutate(across(c(estimate, ci_low, ci_high), ~ fmt_pct(.x))) |>
+  head(30) |>
+  knitr::kable(
+    caption = "Tabela 5 - Wilson intervals da Injection Following Rate por tipo de ataque."
+  )
+```
+
+# Teste binomial exato contra referencia C0
+
+Este teste compara a proporcao observada em cada cenario contra a proporcao observada do C0 no mesmo split/metrica.
+
+Importante: aqui o C0 e tratado como referencia fixa. Para comparacao pareada no mesmo exemplo, veja as secoes de bootstrap e teste pareado abaixo.
+
+```{r exact-binomial-vs-c0}
+c0_reference_proportions <- wilson_proportions |>
+  filter(scenario_id == "c0_base") |>
+  select(
+    metric,
+    split_group,
+    c0_n = n,
+    c0_k = k,
+    c0_estimate = estimate
+  )
+
+exact_binomial_vs_c0 <- wilson_proportions |>
+  filter(scenario_id != "c0_base") |>
+  left_join(c0_reference_proportions, by = c("metric", "split_group")) |>
+  mutate(
+    alternative = if_else(direction == "higher", "greater", "less"),
+    p_value = pmap_dbl(
+      list(k, n, c0_estimate, alternative),
+      exact_binom_p
+    ),
+    significant_05 = !is.na(p_value) & p_value < 0.05
+  ) |>
+  arrange(metric, split_group, p_value)
+
+write_inf_csv(exact_binomial_vs_c0, "07_exact_binomial_vs_c0.csv")
+
+exact_binomial_vs_c0 |>
+  filter(
+    metric %in% c("clean_accuracy", "robust_accuracy", "injection_following_rate", "invalid_output_rate"),
+    split_group %in% c("clean", "all_attacks")
+  ) |>
+  select(
+    scenario_short,
+    metric_label,
+    split_group,
+    n,
+    k,
+    estimate,
+    c0_estimate,
+    alternative,
+    p_value,
+    significant_05
+  ) |>
+  mutate(
+    estimate = fmt_pct(estimate),
+    c0_estimate = fmt_pct(c0_estimate),
+    p_value = scales::pvalue(p_value, accuracy = 0.001)
+  ) |>
+  knitr::kable(
+    caption = "Tabela 6 - Teste binomial exato contra a proporcao do C0."
+  )
+```
+
+# Comparacao pareada contra C0
+
+Esta secao usa `paired_vs_c0_rows.csv`, que ja contem as saidas do cenario avaliado e a saida correspondente do C0 no mesmo exemplo.
+
+```{r load-paired-rows}
+paired_rows_path <- file.path(ERROR_TABLE_DIR, "paired_vs_c0_rows.csv")
+
+if (!file.exists(paired_rows_path)) {
+  paired_rows <- NULL
+  cat("Arquivo paired_vs_c0_rows.csv nao encontrado. Secoes pareadas serao puladas.")
+} else {
+  paired_rows <- readr::read_csv(
+    paired_rows_path,
+    show_col_types = FALSE,
+    col_select = any_of(c(
+      "scenario_id",
+      "scenario_label",
+      "seed",
+      "eval_split",
+      "example_id",
+      "example_key",
+      "base_id",
+      "task_name",
+      "attack_type",
+      "is_correct",
+      "followed_attack",
+      "is_invalid_output",
+      "is_valid_output",
+      "reference_is_correct",
+      "reference_followed_attack",
+      "reference_is_valid_output"
+    ))
+  ) |>
+    add_scenario_info() |>
+    mutate(
+      seed = as.integer(seed),
+      attack_type = ifelse(is.na(attack_type) | attack_type == "", "clean", as.character(attack_type)),
+      task_name = as.character(task_name),
+      eval_split = as.character(eval_split),
+      is_attacked_split = eval_split %in% c("test_attacked_seen", "test_attacked_unseen"),
+      is_correct = to_logical_safe(is_correct),
+      followed_attack = to_logical_safe(followed_attack),
+      is_invalid_output = to_logical_safe(is_invalid_output),
+      is_valid_output = to_logical_safe(is_valid_output),
+      reference_is_correct = to_logical_safe(reference_is_correct),
+      reference_followed_attack = to_logical_safe(reference_followed_attack),
+      reference_is_valid_output = to_logical_safe(reference_is_valid_output),
+      reference_is_invalid_output = !reference_is_valid_output
+    )
+
+  paired_coverage <- paired_rows |>
+    count(scenario_id, scenario_short, seed, eval_split, name = "paired_examples") |>
+    sort_scenarios()
+
+  write_inf_csv(paired_coverage, "08_paired_rows_coverage.csv")
+
+  paired_coverage |>
+    knitr::kable(
+      caption = "Tabela 7 - Cobertura dos exemplos pareados contra C0."
+    )
+}
+```
+
+```{r build-paired-events}
+if (!is.null(paired_rows)) {
+  paired_events <- bind_rows(
+    paired_rows |>
+      filter(eval_split == "test_clean") |>
+      transmute(
+        scenario_id,
+        scenario_short,
+        scenario_label,
+        seed,
+        eval_split,
+        task_name,
+        attack_type,
+        metric = "clean_accuracy_delta_vs_c0",
+        metric_label = "Clean accuracy delta vs C0",
+        direction = "higher",
+        event_defense = is_correct,
+        event_reference = reference_is_correct
+      ),
+
+    paired_rows |>
+      filter(is_attacked_split) |>
+      transmute(
+        scenario_id,
+        scenario_short,
+        scenario_label,
+        seed,
+        eval_split,
+        task_name,
+        attack_type,
+        metric = "robust_accuracy_delta_vs_c0",
+        metric_label = "Robust accuracy delta vs C0",
+        direction = "higher",
+        event_defense = is_correct,
+        event_reference = reference_is_correct
+      ),
+
+    paired_rows |>
+      filter(is_attacked_split) |>
+      transmute(
+        scenario_id,
+        scenario_short,
+        scenario_label,
+        seed,
+        eval_split,
+        task_name,
+        attack_type,
+        metric = "injection_following_rate_delta_vs_c0",
+        metric_label = "Injection Following Rate delta vs C0",
+        direction = "lower",
+        event_defense = followed_attack,
+        event_reference = reference_followed_attack
+      ),
+
+    paired_rows |>
+      transmute(
+        scenario_id,
+        scenario_short,
+        scenario_label,
+        seed,
+        eval_split,
+        task_name,
+        attack_type,
+        metric = "invalid_output_rate_delta_vs_c0",
+        metric_label = "Invalid output rate delta vs C0",
+        direction = "lower",
+        event_defense = is_invalid_output,
+        event_reference = reference_is_invalid_output
+      )
+  ) |>
+    filter(!is.na(event_defense), !is.na(event_reference)) |>
+    mutate(
+      event_defense_int = as.integer(event_defense),
+      event_reference_int = as.integer(event_reference),
+      raw_delta = event_defense_int - event_reference_int,
+      direction_adjusted_delta = if_else(direction == "higher", raw_delta, -raw_delta),
+      stratum = paste(seed, eval_split, task_name, attack_type, sep = "__")
+    )
+
+  write_inf_csv(paired_events, "09_paired_events_long.csv")
+
+  paired_events |>
+    count(metric_label, eval_split, scenario_short, name = "n_pairs") |>
+    head(40) |>
+    knitr::kable(
+      caption = "Tabela 8 - Eventos pareados construidos para comparacao contra C0."
+    )
+}
+```
+
+# Bootstrap pareado
+
+O bootstrap reamostra os pares com reposicao. Quando possivel, a reamostragem preserva os estratos `seed`, `eval_split`, `task_name` e `attack_type`.
+
+```{r paired-bootstrap-functions}
+bootstrap_stratified_mean <- function(values, strata, B = 500) {
+  values <- as.numeric(values)
+  strata <- as.character(strata)
+
+  valid <- !is.na(values) & !is.na(strata)
+
+  values <- values[valid]
+  strata <- strata[valid]
+
+  if (length(values) == 0) {
+    return(rep(NA_real_, B))
+  }
+
+  split_values <- split(values, strata)
+
+  replicate(
+    B,
+    {
+      sampled <- unlist(
+        lapply(
+          split_values,
+          function(x) {
+            sample(x, size = length(x), replace = TRUE)
+          }
+        ),
+        use.names = FALSE
+      )
+
+      mean(sampled, na.rm = TRUE)
+    }
+  )
+}
+
+summarise_bootstrap_delta <- function(df, B = N_BOOTSTRAP) {
+  raw_boot <- bootstrap_stratified_mean(df$raw_delta, df$stratum, B = B)
+  adjusted_boot <- bootstrap_stratified_mean(df$direction_adjusted_delta, df$stratum, B = B)
+
+  tibble(
+    n_pairs = nrow(df),
+    n_strata = n_distinct(df$stratum),
+    mean_raw_delta = mean(df$raw_delta, na.rm = TRUE),
+    mean_direction_adjusted_delta = mean(df$direction_adjusted_delta, na.rm = TRUE),
+    boot_raw_ci_low = as.numeric(quantile(raw_boot, 0.025, na.rm = TRUE)),
+    boot_raw_ci_high = as.numeric(quantile(raw_boot, 0.975, na.rm = TRUE)),
+    boot_adjusted_ci_low = as.numeric(quantile(adjusted_boot, 0.025, na.rm = TRUE)),
+    boot_adjusted_ci_high = as.numeric(quantile(adjusted_boot, 0.975, na.rm = TRUE))
+  )
+}
+```
+
+```{r paired-bootstrap-run}
+if (exists("paired_events")) {
+  paired_bootstrap <- paired_events |>
+    group_by(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      eval_split,
+      metric,
+      metric_label,
+      direction
+    ) |>
+    group_modify(~ summarise_bootstrap_delta(.x, B = N_BOOTSTRAP)) |>
+    ungroup() |>
+    sort_scenarios() |>
+    mutate(
+      improvement_direction = if_else(
+        direction == "higher",
+        "Positive adjusted delta means higher than C0.",
+        "Positive adjusted delta means lower than C0."
+      )
+    )
+
+  write_inf_csv(paired_bootstrap, "10_paired_bootstrap_delta_vs_c0_fraction.csv")
+
+  paired_bootstrap_percent <- paired_bootstrap |>
+    mutate(
+      across(
+        c(
+          mean_raw_delta,
+          mean_direction_adjusted_delta,
+          boot_raw_ci_low,
+          boot_raw_ci_high,
+          boot_adjusted_ci_low,
+          boot_adjusted_ci_high
+        ),
+        ~ .x * 100
+      )
+    )
+
+  write_inf_csv(paired_bootstrap_percent, "10_paired_bootstrap_delta_vs_c0_percent.csv")
+
+  paired_bootstrap |>
+    select(
+      scenario_short,
+      eval_split,
+      metric_label,
+      n_pairs,
+      n_strata,
+      mean_raw_delta,
+      boot_raw_ci_low,
+      boot_raw_ci_high,
+      mean_direction_adjusted_delta,
+      boot_adjusted_ci_low,
+      boot_adjusted_ci_high
+    ) |>
+    mutate(
+      across(
+        c(
+          mean_raw_delta,
+          boot_raw_ci_low,
+          boot_raw_ci_high,
+          mean_direction_adjusted_delta,
+          boot_adjusted_ci_low,
+          boot_adjusted_ci_high
+        ),
+        ~ fmt_pct(.x)
+      )
+    ) |>
+    head(40) |>
+    knitr::kable(
+      caption = "Tabela 9 - Bootstrap pareado dos deltas contra C0."
+    )
+}
+```
+
+```{r fig-paired-bootstrap, fig.width=11, fig.height=7}
+if (exists("paired_bootstrap")) {
+  bootstrap_plot_data <- paired_bootstrap |>
+    filter(metric %in% c(
+      "clean_accuracy_delta_vs_c0",
+      "robust_accuracy_delta_vs_c0",
+      "injection_following_rate_delta_vs_c0"
+    )) |>
+    mutate(
+      metric_label = factor(
+        metric_label,
+        levels = c(
+          "Clean accuracy delta vs C0",
+          "Robust accuracy delta vs C0",
+          "Injection Following Rate delta vs C0"
+        )
+      ),
+      mean_adj_pct = mean_direction_adjusted_delta * 100,
+      low_adj_pct = boot_adjusted_ci_low * 100,
+      high_adj_pct = boot_adjusted_ci_high * 100,
+      eval_split_label = case_when(
+        eval_split == "test_clean" ~ "Clean",
+        eval_split == "test_attacked_seen" ~ "Seen attacks",
+        eval_split == "test_attacked_unseen" ~ "Unseen attacks",
+        TRUE ~ eval_split
+      )
+    )
+
+  p_bootstrap_delta <- bootstrap_plot_data |>
+    ggplot(aes(x = scenario_short, y = mean_adj_pct, color = scenario_short)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey45") +
+    geom_errorbar(
+      aes(ymin = low_adj_pct, ymax = high_adj_pct),
+      width = 0.14,
+      linewidth = 0.7,
+      show.legend = FALSE
+    ) +
+    geom_point(size = 3.1, show.legend = FALSE) +
+    facet_grid(metric_label ~ eval_split_label, scales = "free_y") +
+    scale_color_manual(values = scenario_palette, drop = FALSE) +
+    labs(
+      title = "Paired bootstrap deltas vs C0",
+      subtitle = "Valores positivos indicam melhora na direcao desejada. Para IFR, positivo significa reducao em relacao ao C0.",
+      x = "Scenario",
+      y = "Direction-adjusted delta (percentage points)"
+    ) +
+    base_theme()
+
+  print(p_bootstrap_delta)
+
+  save_inf_figure(
+    p_bootstrap_delta,
+    "02_paired_bootstrap_delta_vs_c0.png",
+    width = 11,
+    height = 7
+  )
+}
+```
+
+# Teste binomial pareado em pares discordantes
+
+Este teste considera apenas pares discordantes:
+
+- para metricas em que maior e melhor, conta casos em que a defesa acerta e C0 erra contra casos em que a defesa erra e C0 acerta;
+- para metricas em que menor e melhor, conta casos em que a defesa evita o evento e C0 apresenta o evento contra o inverso.
+
+A hipotese nula e que, entre pares discordantes, melhora e piora sao igualmente provaveis.
+
+```{r paired-binomial-sign-test}
+if (exists("paired_events")) {
+  paired_sign_test <- paired_events |>
+    mutate(
+      defense_better = case_when(
+        direction == "higher" & event_defense_int == 1 & event_reference_int == 0 ~ TRUE,
+        direction == "lower" & event_defense_int == 0 & event_reference_int == 1 ~ TRUE,
+        TRUE ~ FALSE
+      ),
+      defense_worse = case_when(
+        direction == "higher" & event_defense_int == 0 & event_reference_int == 1 ~ TRUE,
+        direction == "lower" & event_defense_int == 1 & event_reference_int == 0 ~ TRUE,
+        TRUE ~ FALSE
+      )
+    ) |>
+    group_by(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      eval_split,
+      metric,
+      metric_label,
+      direction
+    ) |>
+    summarise(
+      n_pairs = n(),
+      better = sum(defense_better, na.rm = TRUE),
+      worse = sum(defense_worse, na.rm = TRUE),
+      discordant_pairs = better + worse,
+      better_rate_among_discordant = if_else(discordant_pairs > 0, better / discordant_pairs, NA_real_),
+      p_value = map2_dbl(
+        better,
+        discordant_pairs,
+        ~ paired_binom_p(.x, .y, alternative = "greater")
+      ),
+      significant_05 = !is.na(p_value) & p_value < 0.05,
+      .groups = "drop"
+    ) |>
+    sort_scenarios()
+
+  write_inf_csv(paired_sign_test, "11_paired_binomial_sign_test_vs_c0.csv")
+
+  paired_sign_test |>
+    select(
+      scenario_short,
+      eval_split,
+      metric_label,
+      n_pairs,
+      better,
+      worse,
+      discordant_pairs,
+      better_rate_among_discordant,
+      p_value,
+      significant_05
+    ) |>
+    mutate(
+      better_rate_among_discordant = fmt_pct(better_rate_among_discordant),
+      p_value = scales::pvalue(p_value, accuracy = 0.001)
+    ) |>
+    head(50) |>
+    knitr::kable(
+      caption = "Tabela 10 - Teste binomial pareado sobre pares discordantes contra C0."
+    )
+}
+```
+
+```{r fig-paired-sign-test, fig.width=10.5, fig.height=6.5}
+if (exists("paired_sign_test")) {
+  sign_plot_data <- paired_sign_test |>
+    filter(metric %in% c(
+      "clean_accuracy_delta_vs_c0",
+      "robust_accuracy_delta_vs_c0",
+      "injection_following_rate_delta_vs_c0"
+    )) |>
+    mutate(
+      eval_split_label = case_when(
+        eval_split == "test_clean" ~ "Clean",
+        eval_split == "test_attacked_seen" ~ "Seen attacks",
+        eval_split == "test_attacked_unseen" ~ "Unseen attacks",
+        TRUE ~ eval_split
+      )
+    )
+
+  p_sign_test <- sign_plot_data |>
+    ggplot(aes(x = scenario_short, y = better_rate_among_discordant, fill = scenario_short)) +
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey45") +
+    geom_col(width = 0.72, show.legend = FALSE) +
+    facet_grid(metric_label ~ eval_split_label) +
+    scale_fill_manual(values = scenario_palette, drop = FALSE) +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(0, 1)) +
+    labs(
+      title = "Paired sign test: improvement among discordant pairs",
+      subtitle = "A linha de 50% representa a hipotese nula de melhora e piora igualmente provaveis.",
+      x = "Scenario",
+      y = "Better among discordant pairs"
+    ) +
+    base_theme()
+
+  print(p_sign_test)
+
+  save_inf_figure(
+    p_sign_test,
+    "03_paired_sign_test_discordant_pairs.png",
+    width = 10.5,
+    height = 6.5
+  )
+}
+```
+
+# Resumo executivo
+
+```{r executive-summary}
+executive_summary <- list(
+  wilson_main = wilson_proportions |>
+    filter(
+      metric %in% c("clean_accuracy", "robust_accuracy", "injection_following_rate", "invalid_output_rate"),
+      split_group %in% c("clean", "all_attacks")
+    ) |>
+    select(scenario_short, metric_label, split_group, n, estimate, ci_low, ci_high),
+
+  exact_binomial_main = exact_binomial_vs_c0 |>
+    filter(
+      metric %in% c("clean_accuracy", "robust_accuracy", "injection_following_rate", "invalid_output_rate"),
+      split_group %in% c("clean", "all_attacks")
+    ) |>
+    select(scenario_short, metric_label, split_group, estimate, c0_estimate, p_value, significant_05)
+)
+
+write_inf_csv(executive_summary$wilson_main, "12_executive_wilson_main_fraction.csv")
+write_inf_csv(executive_summary$exact_binomial_main, "13_executive_exact_binomial_main.csv")
+
+if (exists("paired_bootstrap")) {
+  write_inf_csv(
+    paired_bootstrap |>
+      filter(metric %in% c(
+        "clean_accuracy_delta_vs_c0",
+        "robust_accuracy_delta_vs_c0",
+        "injection_following_rate_delta_vs_c0"
+      )),
+    "14_executive_paired_bootstrap_main.csv"
+  )
+}
+
+if (exists("paired_sign_test")) {
+  write_inf_csv(
+    paired_sign_test |>
+      filter(metric %in% c(
+        "clean_accuracy_delta_vs_c0",
+        "robust_accuracy_delta_vs_c0",
+        "injection_following_rate_delta_vs_c0"
+      )),
+    "15_executive_paired_sign_test_main.csv"
+  )
+}
+
+cat("Resumo executivo salvo em tables/proportion_and_paired_inference/.\n")
+```
+
+# Interpretacao metodologica
+
+```{r methodological-notes, results='asis'}
+cat("
+## Como ler este Rmd
+
+### Wilson intervals
+
+Os Wilson intervals resumem incerteza de proporcoes binarias, como accuracy, robust accuracy, Injection Following Rate e invalid output rate. Eles sao preferiveis ao intervalo normal simples, especialmente quando a proporcao esta proxima de 0 ou 1.
+
+### Teste binomial exato contra C0
+
+O teste binomial exato compara a taxa observada contra a taxa de referencia do C0. Ele e util como diagnostico, mas trata o C0 como proporcao fixa. Para comparacao no mesmo exemplo, use os resultados pareados.
+
+### Bootstrap pareado
+
+O bootstrap pareado compara o cenario defendido com C0 no mesmo exemplo. Valores positivos no delta ajustado indicam melhora na direcao desejada. Para Injection Following Rate, isso significa reducao em relacao ao C0.
+
+### Teste binomial pareado
+
+O teste pareado considera apenas pares discordantes. Ele pergunta se a quantidade de pares em que a defesa melhora C0 e maior do que a quantidade de pares em que ela piora C0.
+")
+```
+
+# Arquivos gerados
+
+Este Rmd salva tabelas em:
+
+```text
+tables/proportion_and_paired_inference/
+```
+
+e figuras em:
+
+```text
+figures/proportion_and_paired_inference/
+```
+
+Arquivos principais:
+
+```text
+04_wilson_proportions_fraction.csv
+04_wilson_proportions_percent.csv
+05_wilson_by_attack_type_fraction.csv
+06_wilson_by_task_fraction.csv
+07_exact_binomial_vs_c0.csv
+10_paired_bootstrap_delta_vs_c0_fraction.csv
+10_paired_bootstrap_delta_vs_c0_percent.csv
+11_paired_binomial_sign_test_vs_c0.csv
+
+01_wilson_main_proportions.png
+02_paired_bootstrap_delta_vs_c0.png
+03_paired_sign_test_discordant_pairs.png
+```

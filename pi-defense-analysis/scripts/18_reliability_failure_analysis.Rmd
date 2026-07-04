@@ -1,0 +1,1865 @@
+---
+title: "RPC-PI Experiment - Reliability and Failure Analysis"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6,
+  dpi = 300
+)
+
+options(knitr.kable.NA = "-")
+
+required_packages <- c(
+  "tidyverse",
+  "readr",
+  "ggplot2",
+  "scales",
+  "stringr",
+  "forcats",
+  "fs",
+  "here",
+  "knitr",
+  "jsonlite",
+  "lubridate"
+)
+
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(scales)
+library(stringr)
+library(forcats)
+library(fs)
+library(here)
+library(knitr)
+library(jsonlite)
+library(lubridate)
+```
+
+# Objective
+
+This R Markdown analyzes **pipeline reliability and failures**.
+
+The main questions are:
+
+```text
+Which stages completed successfully?
+Which scenario/seed runs failed or were retried?
+Are there missing metadata files or missing output files?
+Are there malformed JSONL event lines?
+Where do error.txt files appear?
+Which failures are training, inference, metrics, pairwise, or error-analysis failures?
+```
+
+This report focuses on operational reliability, not model quality.
+
+It uses logs from:
+
+```text
+training
+inference
+metrics
+pairwise_metrics
+statistical_analysis
+error_analysis
+```
+
+# Expected folder structure
+
+This Rmd expects logs in one of these locations:
+
+```text
+data/logs/
+logs/
+```
+
+If `logs.zip` exists in the project root or inside `data/`, this Rmd tries to extract it automatically to `data/`.
+
+# Paths
+
+```{r paths}
+OUT_TABLE_DIR <- here::here("tables", "reliability_failure_analysis")
+OUT_FIG_DIR <- here::here("figures", "reliability_failure_analysis")
+
+fs::dir_create(OUT_TABLE_DIR)
+fs::dir_create(OUT_FIG_DIR)
+
+# Try to extract logs.zip automatically if needed.
+if (!dir.exists(here::here("data", "logs")) && file.exists(here::here("logs.zip"))) {
+  dir.create(here::here("data"), showWarnings = FALSE)
+  unzip(here::here("logs.zip"), exdir = here::here("data"))
+}
+
+if (!dir.exists(here::here("data", "logs")) && file.exists(here::here("data", "logs.zip"))) {
+  dir.create(here::here("data"), showWarnings = FALSE)
+  unzip(here::here("data", "logs.zip"), exdir = here::here("data"))
+}
+
+candidate_logs_dirs <- c(
+  here::here("data", "logs"),
+  here::here("logs")
+)
+
+LOGS_DIR <- candidate_logs_dirs[dir.exists(candidate_logs_dirs)][1]
+
+if (is.na(LOGS_DIR)) {
+  stop(
+    "Could not find logs directory. Expected one of:\n",
+    paste(candidate_logs_dirs, collapse = "\n"),
+    "\nOr place logs.zip in the project root or data/."
+  )
+}
+```
+
+# Helper functions
+
+```{r helpers}
+`%||%` <- function(x, y) {
+  if (is.null(x) || length(x) == 0) y else x
+}
+
+scenario_order <- c(
+  "c0_base",
+  "c1_struq_format_only",
+  "c2_struq_sft",
+  "c3_secalign_dpo",
+  "c4_ih_sft"
+)
+
+scenario_labels <- tibble(
+  scenario_id = scenario_order,
+  scenario_short = c("C0", "C1", "C2", "C3", "C4"),
+  scenario_label = c(
+    "C0 - Base model",
+    "C1 - StruQ format-only",
+    "C2 - StruQ-like SFT",
+    "C3 - SecAlign-like DPO",
+    "C4 - Instruction-Hierarchy-like SFT"
+  )
+)
+
+scenario_palette <- c(
+  C0 = "#7F7F7F",
+  C1 = "#D55E00",
+  C2 = "#0072B2",
+  C3 = "#CC79A7",
+  C4 = "#009E73"
+)
+
+stage_order <- c(
+  "training",
+  "inference",
+  "metrics",
+  "pairwise_metrics",
+  "statistical_analysis",
+  "error_analysis"
+)
+
+stage_labels <- c(
+  training = "Training",
+  inference = "Inference",
+  metrics = "Metrics",
+  pairwise_metrics = "Pairwise metrics",
+  statistical_analysis = "Statistical analysis",
+  error_analysis = "Error analysis"
+)
+
+stage_palette <- c(
+  training = "#0072B2",
+  inference = "#009E73",
+  metrics = "#E69F00",
+  pairwise_metrics = "#CC79A7",
+  statistical_analysis = "#56B4E9",
+  error_analysis = "#D55E00"
+)
+
+sort_scenarios <- function(df) {
+  df |>
+    mutate(
+      scenario_id = factor(as.character(scenario_id), levels = scenario_order),
+      scenario_short = factor(as.character(scenario_short), levels = c("C0", "C1", "C2", "C3", "C4"))
+    ) |>
+    arrange(scenario_id)
+}
+
+sort_stages <- function(df) {
+  df |>
+    mutate(
+      stage = factor(as.character(stage), levels = stage_order),
+      stage_label = factor(
+        ifelse(
+          is.na(stage_labels[as.character(stage)]),
+          as.character(stage),
+          stage_labels[as.character(stage)]
+        ),
+        levels = stage_labels[stage_order]
+      )
+    ) |>
+    arrange(stage)
+}
+
+add_scenario_info <- function(df) {
+  if (!("scenario_id" %in% names(df))) {
+    df$scenario_id <- NA_character_
+  }
+
+  out <- df |>
+    mutate(scenario_id = as.character(scenario_id)) |>
+    left_join(scenario_labels, by = "scenario_id", suffix = c("", "_lookup"))
+
+  if (!("scenario_label" %in% names(out))) {
+    out$scenario_label <- out$scenario_id
+  }
+
+  if ("scenario_label_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_label = coalesce(
+          as.character(scenario_label),
+          as.character(scenario_label_lookup)
+        )
+      )
+  }
+
+  if (!("scenario_short" %in% names(out))) {
+    out$scenario_short <- NA_character_
+  }
+
+  if ("scenario_short_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_short = coalesce(
+          as.character(scenario_short),
+          as.character(scenario_short_lookup)
+        )
+      )
+  }
+
+  out |>
+    mutate(
+      scenario_short = ifelse(
+        is.na(scenario_short),
+        recode(
+          as.character(scenario_id),
+          c0_base = "C0",
+          c1_struq_format_only = "C1",
+          c2_struq_sft = "C2",
+          c3_secalign_dpo = "C3",
+          c4_ih_sft = "C4",
+          .default = as.character(scenario_id)
+        ),
+        scenario_short
+      )
+    ) |>
+    select(-any_of(c("scenario_label_lookup", "scenario_short_lookup"))) |>
+    sort_scenarios()
+}
+
+parse_time_utc <- function(x) {
+  lubridate::ymd_hms(x, tz = "UTC", quiet = TRUE)
+}
+
+normalize_path_for_match <- function(path) {
+  stringr::str_replace_all(as.character(path), "\\\\", "/")
+}
+
+fmt_number <- function(x, accuracy = 0.01) {
+  scales::number(x, accuracy = accuracy, big.mark = ",")
+}
+
+fmt_pct <- function(x, accuracy = 0.1) {
+  scales::percent(x, accuracy = accuracy)
+}
+
+fmt_duration <- function(seconds) {
+  ifelse(
+    is.na(seconds),
+    NA_character_,
+    paste0(
+      floor(seconds / 3600), "h ",
+      floor((seconds %% 3600) / 60), "m ",
+      round(seconds %% 60), "s"
+    )
+  )
+}
+
+base_theme <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      legend.position = "bottom",
+      plot.title.position = "plot",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey30"),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(face = "bold")
+    )
+}
+
+value_to_text <- function(value) {
+  if (is.null(value) || length(value) == 0) {
+    return(NA_character_)
+  }
+
+  tryCatch(
+    as.character(jsonlite::toJSON(value, auto_unbox = TRUE, null = "null")),
+    error = function(e) paste(capture.output(str(value)), collapse = " ")
+  )
+}
+
+replace_null_columns <- function(x) {
+  if (!is.list(x)) {
+    return(x)
+  }
+
+  n <- 1
+
+  non_null_lengths <- purrr::map_int(
+    x,
+    function(value) {
+      if (is.null(value)) {
+        0L
+      } else if (is.data.frame(value)) {
+        nrow(value)
+      } else {
+        length(value)
+      }
+    }
+  )
+
+  if (any(non_null_lengths > 0)) {
+    n <- max(non_null_lengths)
+  }
+
+  purrr::map(
+    x,
+    function(value) {
+      if (is.null(value)) {
+        rep(NA_character_, n)
+      } else {
+        value
+      }
+    }
+  )
+}
+
+as_tibble_json_safe <- function(x) {
+  if (is.null(x)) {
+    return(tibble())
+  }
+
+  if (is.data.frame(x)) {
+    x <- replace_null_columns(x)
+    return(tibble::as_tibble(x))
+  }
+
+  if (is.list(x)) {
+    x <- replace_null_columns(x)
+    return(tibble::as_tibble(x))
+  }
+
+  tibble(value = x)
+}
+
+sanitize_for_csv <- function(df) {
+  df <- as_tibble(df)
+  n_rows <- nrow(df)
+
+  for (nm in names(df)) {
+    col <- df[[nm]]
+
+    if (is.data.frame(col)) {
+      if (nrow(col) == n_rows) {
+        df[[nm]] <- purrr::map_chr(
+          seq_len(n_rows),
+          function(i) value_to_text(as.list(col[i, , drop = FALSE]))
+        )
+      } else {
+        df[[nm]] <- rep(value_to_text(col), n_rows)
+      }
+    } else if (is.matrix(col) || is.array(col)) {
+      mat <- as.matrix(col)
+
+      if (nrow(mat) == n_rows) {
+        df[[nm]] <- apply(
+          mat,
+          1,
+          function(row) paste(as.character(row), collapse = " | ")
+        )
+      } else {
+        df[[nm]] <- rep(value_to_text(mat), n_rows)
+      }
+    } else if (is.list(col)) {
+      if (length(col) == n_rows) {
+        df[[nm]] <- purrr::map_chr(col, value_to_text)
+      } else if (length(col) == 1) {
+        df[[nm]] <- rep(value_to_text(col[[1]]), n_rows)
+      } else {
+        df[[nm]] <- rep(value_to_text(col), n_rows)
+      }
+    }
+  }
+
+  df
+}
+
+write_rel_csv <- function(df, filename) {
+  safe_df <- sanitize_for_csv(df)
+  readr::write_csv(safe_df, file.path(OUT_TABLE_DIR, filename))
+  invisible(df)
+}
+
+safe_count_by_stage <- function(df, count_name) {
+  if (is.null(df) || nrow(df) == 0 || !("stage" %in% names(df))) {
+    out <- tibble(stage = character(), n = integer())
+  } else {
+    out <- df |>
+      count(stage, name = "n")
+  }
+
+  names(out)[names(out) == "n"] <- count_name
+  out
+}
+
+save_rel_figure <- function(plot, filename, width = 10, height = 6) {
+  ggsave(
+    file.path(OUT_FIG_DIR, filename),
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = 320,
+    bg = "white"
+  )
+  invisible(plot)
+}
+
+read_jsonl_robust <- function(path, stage_name) {
+  if (!file.exists(path)) {
+    return(list(events = tibble(), bad_lines = tibble()))
+  }
+
+  lines <- readLines(path, warn = FALSE, encoding = "UTF-8")
+
+  if (length(lines) == 0) {
+    return(list(events = tibble(), bad_lines = tibble()))
+  }
+
+  parsed <- vector("list", length(lines))
+  bad_lines <- list()
+
+  for (i in seq_along(lines)) {
+    line <- lines[[i]]
+
+    if (is.na(line) || trimws(line) == "") {
+      next
+    }
+
+    obj <- tryCatch(
+      jsonlite::fromJSON(line, flatten = TRUE),
+      error = function(e) {
+        bad_lines[[length(bad_lines) + 1]] <<- tibble(
+          stage = stage_name,
+          line_number = i,
+          error = conditionMessage(e),
+          line_prefix = substr(line, 1, 300)
+        )
+        NULL
+      }
+    )
+
+    if (!is.null(obj)) {
+      parsed[[i]] <- as_tibble_json_safe(obj)
+    }
+  }
+
+  parsed <- parsed[!vapply(parsed, is.null, logical(1))]
+
+  events <- if (length(parsed) == 0) {
+    tibble()
+  } else {
+    dplyr::bind_rows(parsed) |>
+      mutate(stage = stage_name, .before = 1)
+  }
+
+  bad <- dplyr::bind_rows(bad_lines)
+
+  list(events = events, bad_lines = bad)
+}
+
+read_json_safe <- function(path) {
+  tryCatch(
+    jsonlite::fromJSON(path, flatten = TRUE),
+    error = function(e) NULL
+  )
+}
+
+get_scalar <- function(obj, field, default = NA) {
+  value <- obj[[field]]
+
+  if (is.null(value) || length(value) == 0) {
+    return(default)
+  }
+
+  if (is.data.frame(value)) {
+    if (nrow(value) == 0 || ncol(value) == 0) return(default)
+    return(value[[1]][[1]])
+  }
+
+  if (is.list(value) && length(value) == 1 && !is.null(value[[1]])) {
+    return(value[[1]])
+  }
+
+  value[[1]]
+}
+
+classify_error_text <- function(error_text) {
+  txt <- tolower(error_text)
+
+  case_when(
+    str_detect(txt, "cuda|out of memory|oom|memory") ~ "resource_or_memory",
+    str_detect(txt, "deploymentnotfound|404|not found") ~ "missing_resource_or_deployment",
+    str_detect(txt, "timeout|timed out|deadline") ~ "timeout",
+    str_detect(txt, "rate limit|429|quota") ~ "rate_limit_or_quota",
+    str_detect(txt, "json|parse|premature eof|invalid") ~ "parse_or_json",
+    str_detect(txt, "authentication|unauthorized|permission|forbidden|401|403") ~ "auth_or_permission",
+    str_detect(txt, "connection|network|dns|ssl|tls") ~ "network",
+    str_detect(txt, "assert|expected|validation") ~ "validation_or_assertion",
+    TRUE ~ "other"
+  )
+}
+
+safe_status_group <- function(status) {
+  status_chr <- tolower(as.character(status))
+
+  case_when(
+    is.na(status_chr) | status_chr == "" ~ "unknown",
+    str_detect(status_chr, "complete|success|ok") ~ "completed",
+    str_detect(status_chr, "fail|error|exception|crash") ~ "failed",
+    str_detect(status_chr, "skip") ~ "skipped",
+    str_detect(status_chr, "start|running|progress") ~ "running_or_started",
+    TRUE ~ "other"
+  )
+}
+```
+
+# Discover stage files
+
+```{r discover-stage-files}
+stage_paths <- tibble(
+  stage = stage_order,
+  stage_label = stage_labels[stage_order],
+  stage_dir = file.path(LOGS_DIR, stage_order)
+) |>
+  mutate(
+    dir_exists = dir.exists(stage_dir),
+    event_path = case_when(
+      stage == "training" ~ file.path(stage_dir, "04_run_training_events.jsonl"),
+      stage == "inference" ~ file.path(stage_dir, "05_run_inference_events.jsonl"),
+      stage == "metrics" ~ file.path(stage_dir, "06_compute_metrics_events.jsonl"),
+      stage == "pairwise_metrics" ~ file.path(stage_dir, "07_pairwise_and_injected_metrics_events.jsonl"),
+      stage == "statistical_analysis" ~ file.path(stage_dir, "08_statistical_analysis_events.jsonl"),
+      stage == "error_analysis" ~ file.path(stage_dir, "09_error_analysis_events.jsonl"),
+      TRUE ~ NA_character_
+    ),
+    summary_path = case_when(
+      stage == "training" ~ file.path(stage_dir, "04_run_training_summary.json"),
+      stage == "inference" ~ file.path(stage_dir, "05_run_inference_summary.json"),
+      stage == "metrics" ~ file.path(stage_dir, "06_compute_metrics_summary_full.json"),
+      stage == "pairwise_metrics" ~ file.path(stage_dir, "07_pairwise_and_injected_metrics_summary.json"),
+      stage == "statistical_analysis" ~ file.path(stage_dir, "08_statistical_analysis_summary_full.json"),
+      stage == "error_analysis" ~ file.path(stage_dir, "09_error_analysis_summary.json"),
+      TRUE ~ NA_character_
+    ),
+    event_exists = file.exists(event_path),
+    summary_exists = file.exists(summary_path)
+  ) |>
+  sort_stages()
+
+write_rel_csv(stage_paths, "01_stage_file_inventory.csv")
+
+stage_paths |>
+  knitr::kable(
+    caption = "Table 1 - Stage file inventory."
+  )
+```
+
+# Load and validate event logs
+
+```{r load-events}
+event_read_results <- purrr::map2(
+  stage_paths$event_path,
+  stage_paths$stage,
+  read_jsonl_robust
+)
+
+all_events <- purrr::map_dfr(event_read_results, "events")
+bad_jsonl_lines <- purrr::map_dfr(event_read_results, "bad_lines")
+
+if (!("stage" %in% names(all_events))) {
+  all_events <- tibble(stage = character())
+}
+
+if (!("stage" %in% names(bad_jsonl_lines))) {
+  bad_jsonl_lines <- tibble(
+    stage = character(),
+    line_number = integer(),
+    error = character(),
+    line_prefix = character()
+  )
+}
+
+if (nrow(all_events) > 0) {
+  if (!("scenario_id" %in% names(all_events)) && "scenario" %in% names(all_events)) {
+    all_events <- all_events |>
+      rename(scenario_id = scenario)
+  } else if ("scenario" %in% names(all_events)) {
+    all_events <- all_events |>
+      mutate(
+        scenario_id = coalesce(
+          as.character(scenario_id),
+          as.character(scenario)
+        )
+      )
+  }
+
+  if (!("seed" %in% names(all_events))) {
+    all_events$seed <- NA_integer_
+  }
+
+  if (!("event_type" %in% names(all_events))) {
+    all_events$event_type <- NA_character_
+  }
+
+  if (!("timestamp_utc" %in% names(all_events))) {
+    all_events$timestamp_utc <- NA_character_
+  }
+
+  if (!("status" %in% names(all_events))) {
+    all_events$status <- NA_character_
+  }
+
+  if (!("elapsed_seconds" %in% names(all_events))) {
+    all_events$elapsed_seconds <- NA_real_
+  }
+
+  if (!("rows" %in% names(all_events))) {
+    all_events$rows <- NA_real_
+  }
+
+  all_events <- all_events |>
+    mutate(
+      stage = as.character(stage),
+      event_type = as.character(event_type),
+      timestamp = parse_time_utc(timestamp_utc),
+      scenario_id = as.character(scenario_id),
+      seed = suppressWarnings(as.integer(seed)),
+      status = as.character(status),
+      status_group = safe_status_group(status),
+      elapsed_seconds = suppressWarnings(as.numeric(elapsed_seconds)),
+      rows = suppressWarnings(as.numeric(rows)),
+      event_has_error_signal = str_detect(
+        tolower(paste(event_type, status, sep = " ")),
+        "error|fail|exception|crash"
+      )
+    ) |>
+    add_scenario_info() |>
+    sort_stages()
+} else {
+  all_events <- tibble(
+    stage = character(),
+    event_type = character(),
+    timestamp_utc = character(),
+    timestamp = as.POSIXct(character()),
+    scenario_id = character(),
+    seed = integer(),
+    status = character(),
+    status_group = character(),
+    elapsed_seconds = numeric(),
+    rows = numeric(),
+    event_has_error_signal = logical()
+  )
+}
+
+write_rel_csv(all_events, "02_all_events_enriched.csv")
+write_rel_csv(bad_jsonl_lines, "03_bad_jsonl_lines.csv")
+
+event_integrity_summary <- stage_paths |>
+  select(stage, stage_label, event_exists) |>
+  left_join(
+    safe_count_by_stage(all_events, "parsed_event_rows"),
+    by = "stage"
+  ) |>
+  left_join(
+    safe_count_by_stage(bad_jsonl_lines, "bad_jsonl_lines"),
+    by = "stage"
+  ) |>
+  mutate(
+    parsed_event_rows = replace_na(parsed_event_rows, 0L),
+    bad_jsonl_lines = replace_na(bad_jsonl_lines, 0L),
+    has_bad_jsonl = bad_jsonl_lines > 0
+  ) |>
+  sort_stages()
+
+write_rel_csv(event_integrity_summary, "04_event_integrity_summary.csv")
+
+event_integrity_summary |>
+  knitr::kable(
+    caption = "Table 2 - Event integrity summary."
+  )
+
+if (nrow(bad_jsonl_lines) > 0) {
+  bad_jsonl_lines |>
+    knitr::kable(
+      caption = "Table 3 - Malformed JSONL lines."
+    )
+} else {
+  cat("No malformed JSONL lines found.")
+}
+```
+
+# Event-level reliability
+
+```{r event-reliability}
+event_type_summary <- if (nrow(all_events) > 0) {
+  all_events |>
+    count(stage, stage_label, event_type, status_group, name = "n_events") |>
+    group_by(stage, stage_label) |>
+    mutate(event_share_within_stage = n_events / sum(n_events)) |>
+    ungroup() |>
+    sort_stages()
+} else {
+  tibble()
+}
+
+event_scenario_summary <- if (nrow(all_events) > 0) {
+  all_events |>
+    group_by(stage, stage_label, scenario_id, scenario_short, seed) |>
+    summarise(
+      n_events = n(),
+      n_started_events = sum(str_detect(event_type, "started|start"), na.rm = TRUE),
+      n_completed_events = sum(str_detect(event_type, "completed|complete"), na.rm = TRUE),
+      n_failed_or_error_events = sum(event_has_error_signal, na.rm = TRUE),
+      first_event_utc = min(timestamp, na.rm = TRUE),
+      last_event_utc = max(timestamp, na.rm = TRUE),
+      observed_seconds = as.numeric(difftime(last_event_utc, first_event_utc, units = "secs")),
+      reported_elapsed_seconds_sum = sum(elapsed_seconds, na.rm = TRUE),
+      rows_sum = sum(rows, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    mutate(
+      event_reliability_label = case_when(
+        n_failed_or_error_events > 0 ~ "has_error_signal",
+        n_started_events > n_completed_events & n_completed_events == 0 ~ "started_without_completion",
+        n_started_events > n_completed_events ~ "possible_retry_or_incomplete",
+        n_completed_events >= 1 ~ "completed_signal",
+        TRUE ~ "no_completion_signal"
+      )
+    ) |>
+    sort_stages() |>
+    sort_scenarios()
+} else {
+  tibble()
+}
+
+write_rel_csv(event_type_summary, "05_event_type_summary.csv")
+write_rel_csv(event_scenario_summary, "06_event_scenario_seed_summary.csv")
+
+event_type_summary |>
+  mutate(event_share_within_stage = fmt_pct(event_share_within_stage)) |>
+  knitr::kable(
+    caption = "Table 4 - Event type summary by stage."
+  )
+
+event_scenario_summary |>
+  select(
+    stage_label,
+    scenario_short,
+    seed,
+    n_events,
+    n_started_events,
+    n_completed_events,
+    n_failed_or_error_events,
+    observed_seconds,
+    reported_elapsed_seconds_sum,
+    rows_sum,
+    event_reliability_label
+  ) |>
+  mutate(
+    observed_seconds = fmt_number(observed_seconds),
+    reported_elapsed_seconds_sum = fmt_number(reported_elapsed_seconds_sum),
+    rows_sum = fmt_number(rows_sum, accuracy = 1)
+  ) |>
+  knitr::kable(
+    caption = "Table 5 - Event reliability by scenario and seed."
+  )
+```
+
+# Metadata inventory
+
+```{r metadata-inventory}
+all_json_files <- fs::dir_ls(LOGS_DIR, recurse = TRUE, regexp = "\\.json$")
+
+metadata_inventory <- tibble(
+  file_path = as.character(all_json_files)
+) |>
+  mutate(
+    stage = case_when(
+      str_detect(normalize_path_for_match(file_path), "/training/") ~ "training",
+      str_detect(normalize_path_for_match(file_path), "/inference/") ~ "inference",
+      str_detect(normalize_path_for_match(file_path), "/metrics/") ~ "metrics",
+      str_detect(normalize_path_for_match(file_path), "/pairwise_metrics/") ~ "pairwise_metrics",
+      str_detect(normalize_path_for_match(file_path), "/statistical_analysis/") ~ "statistical_analysis",
+      str_detect(normalize_path_for_match(file_path), "/error_analysis/") ~ "error_analysis",
+      TRUE ~ NA_character_
+    ),
+    file_name = basename(file_path),
+    file_type = case_when(
+      file_name == "run_metadata.json" ~ "run_metadata",
+      str_detect(file_name, "test_.*_metadata\\.json$") ~ "split_metadata",
+      str_detect(file_name, "summary") ~ "summary",
+      TRUE ~ "other_json"
+    ),
+    file_size_bytes = file.info(file_path)$size,
+    parse_ok = purrr::map_lgl(
+      file_path,
+      function(path) !is.null(read_json_safe(path))
+    )
+  ) |>
+  sort_stages()
+
+metadata_inventory_summary <- metadata_inventory |>
+  count(stage, stage_label, file_type, parse_ok, name = "n_files") |>
+  sort_stages()
+
+write_rel_csv(metadata_inventory, "07_metadata_inventory.csv")
+write_rel_csv(metadata_inventory_summary, "08_metadata_inventory_summary.csv")
+
+metadata_inventory_summary |>
+  knitr::kable(
+    caption = "Table 6 - Metadata inventory summary."
+  )
+```
+
+# Run metadata reliability
+
+```{r run-metadata-reliability}
+run_metadata_files <- metadata_inventory |>
+  filter(file_type == "run_metadata", parse_ok) |>
+  pull(file_path)
+
+read_run_metadata_minimal <- function(path) {
+  obj <- read_json_safe(path)
+
+  if (is.null(obj)) {
+    return(tibble(
+      metadata_path = path,
+      parse_ok = FALSE
+    ))
+  }
+
+  path_chr <- as.character(path)
+
+  stage <- case_when(
+    str_detect(normalize_path_for_match(path_chr), "/training/") ~ "training",
+    str_detect(normalize_path_for_match(path_chr), "/inference/") ~ "inference",
+    str_detect(normalize_path_for_match(path_chr), "/pairwise_metrics/") ~ "pairwise_metrics",
+    TRUE ~ NA_character_
+  )
+
+  substage <- case_when(
+    str_detect(normalize_path_for_match(path_chr), "/pairwise_metrics/.*/injected_only/") ~ "injected_only",
+    str_detect(normalize_path_for_match(path_chr), "/pairwise_metrics/.*/win_rate/") ~ "win_rate",
+    TRUE ~ stage
+  )
+
+  scenario_id <- as.character(
+    get_scalar(
+      obj,
+      "scenario_id",
+      get_scalar(
+        obj,
+        "scenario",
+        get_scalar(obj, "defended_scenario_id", NA_character_)
+      )
+    )
+  )
+
+  seed <- suppressWarnings(as.integer(
+    get_scalar(
+      obj,
+      "seed",
+      get_scalar(obj, "defended_seed", NA_integer_)
+    )
+  ))
+
+  status <- as.character(get_scalar(obj, "status", NA_character_))
+  elapsed_seconds <- suppressWarnings(as.numeric(get_scalar(obj, "elapsed_seconds", NA_real_)))
+
+  tibble(
+    stage = stage,
+    substage = substage,
+    scenario_id = scenario_id,
+    seed = seed,
+    status = status,
+    status_group = safe_status_group(status),
+    started_at_utc = as.character(get_scalar(obj, "started_at_utc", NA_character_)),
+    finished_at_utc = as.character(get_scalar(obj, "finished_at_utc", NA_character_)),
+    started_at = parse_time_utc(started_at_utc),
+    finished_at = parse_time_utc(finished_at_utc),
+    elapsed_seconds = elapsed_seconds,
+    rows = suppressWarnings(as.numeric(get_scalar(obj, "rows", NA_real_))),
+    train_rows = suppressWarnings(as.numeric(get_scalar(obj, "train_rows", NA_real_))),
+    validation_rows = suppressWarnings(as.numeric(get_scalar(obj, "validation_rows", NA_real_))),
+    method = as.character(get_scalar(obj, "method", NA_character_)),
+    run_mode = as.character(get_scalar(obj, "run_mode", NA_character_)),
+    metadata_path = path_chr,
+    parse_ok = TRUE
+  )
+}
+
+run_metadata <- purrr::map_dfr(
+  run_metadata_files,
+  read_run_metadata_minimal
+) |>
+  add_scenario_info() |>
+  mutate(
+    elapsed_minutes = elapsed_seconds / 60,
+    has_started_at = !is.na(started_at),
+    has_finished_at = !is.na(finished_at),
+    has_elapsed_seconds = !is.na(elapsed_seconds),
+    elapsed_from_timestamps = as.numeric(difftime(finished_at, started_at, units = "secs")),
+    elapsed_mismatch_seconds = elapsed_seconds - elapsed_from_timestamps,
+    metadata_issue = case_when(
+      status_group == "failed" ~ "failed_status",
+      !has_started_at ~ "missing_started_at",
+      !has_finished_at ~ "missing_finished_at",
+      !has_elapsed_seconds ~ "missing_elapsed_seconds",
+      !is.na(elapsed_mismatch_seconds) & abs(elapsed_mismatch_seconds) > 5 ~ "elapsed_timestamp_mismatch",
+      TRUE ~ "no_obvious_issue"
+    )
+  ) |>
+  sort_stages() |>
+  sort_scenarios()
+
+run_status_summary <- run_metadata |>
+  count(stage, stage_label, substage, status_group, status, name = "n_runs") |>
+  sort_stages()
+
+run_metadata_issue_summary <- run_metadata |>
+  count(stage, stage_label, substage, metadata_issue, name = "n_runs") |>
+  sort_stages()
+
+write_rel_csv(run_metadata, "09_run_metadata_reliability.csv")
+write_rel_csv(run_status_summary, "10_run_status_summary.csv")
+write_rel_csv(run_metadata_issue_summary, "11_run_metadata_issue_summary.csv")
+
+run_status_summary |>
+  knitr::kable(
+    caption = "Table 7 - Run status summary."
+  )
+
+run_metadata_issue_summary |>
+  knitr::kable(
+    caption = "Table 8 - Run metadata issue summary."
+  )
+```
+
+# Split metadata reliability
+
+```{r split-metadata-reliability}
+split_metadata_files <- metadata_inventory |>
+  filter(file_type == "split_metadata", parse_ok) |>
+  pull(file_path)
+
+read_split_metadata_minimal <- function(path) {
+  obj <- read_json_safe(path)
+
+  if (is.null(obj)) {
+    return(tibble(
+      metadata_path = path,
+      parse_ok = FALSE
+    ))
+  }
+
+  path_chr <- as.character(path)
+
+  stage <- case_when(
+    str_detect(normalize_path_for_match(path_chr), "/inference/") ~ "inference",
+    TRUE ~ NA_character_
+  )
+
+  tibble(
+    stage = stage,
+    scenario_id = as.character(get_scalar(obj, "scenario_id", NA_character_)),
+    seed = suppressWarnings(as.integer(get_scalar(obj, "seed", NA_integer_))),
+    split = as.character(get_scalar(obj, "split", NA_character_)),
+    status = as.character(get_scalar(obj, "status", NA_character_)),
+    status_group = safe_status_group(status),
+    started_at_utc = as.character(get_scalar(obj, "started_at_utc", NA_character_)),
+    finished_at_utc = as.character(get_scalar(obj, "finished_at_utc", NA_character_)),
+    started_at = parse_time_utc(started_at_utc),
+    finished_at = parse_time_utc(finished_at_utc),
+    elapsed_seconds = suppressWarnings(as.numeric(get_scalar(obj, "elapsed_seconds", NA_real_))),
+    rows = suppressWarnings(as.numeric(get_scalar(obj, "rows", NA_real_))),
+    output_path = as.character(get_scalar(obj, "output_path", NA_character_)),
+    normalized_null_count = suppressWarnings(as.numeric(get_scalar(obj, "normalized_null_count", NA_real_))),
+    metadata_path = path_chr,
+    parse_ok = TRUE
+  )
+}
+
+split_metadata <- purrr::map_dfr(
+  split_metadata_files,
+  read_split_metadata_minimal
+) |>
+  add_scenario_info() |>
+  mutate(
+    stage = as.character(stage),
+    elapsed_minutes = elapsed_seconds / 60,
+    output_exists = ifelse(
+      is.na(output_path) | output_path == "",
+      FALSE,
+      file.exists(output_path)
+    ),
+    normalized_null_rate = normalized_null_count / rows,
+    split_issue = case_when(
+      status_group == "failed" ~ "failed_status",
+      is.na(rows) | rows <= 0 ~ "missing_or_zero_rows",
+      is.na(elapsed_seconds) | elapsed_seconds <= 0 ~ "missing_or_zero_elapsed",
+      is.na(output_path) | output_path == "" ~ "missing_output_path",
+      !output_exists ~ "output_path_not_found",
+      !is.na(normalized_null_rate) & normalized_null_rate > 0 ~ "has_normalized_nulls",
+      TRUE ~ "no_obvious_issue"
+    )
+  ) |>
+  sort_stages() |>
+  sort_scenarios()
+
+split_issue_summary <- split_metadata |>
+  count(stage, stage_label, scenario_id, scenario_short, split, split_issue, name = "n_split_metadata_files") |>
+  sort_stages() |>
+  sort_scenarios()
+
+split_coverage_summary <- split_metadata |>
+  count(scenario_id, scenario_short, seed, split, name = "n_split_metadata_files") |>
+  complete(
+    scenario_id = scenario_order,
+    split = c("test_clean", "test_attacked_seen", "test_attacked_unseen"),
+    fill = list(n_split_metadata_files = 0)
+  ) |>
+  add_scenario_info() |>
+  mutate(
+    has_split_metadata = n_split_metadata_files > 0
+  ) |>
+  sort_scenarios()
+
+write_rel_csv(split_metadata, "12_split_metadata_reliability.csv")
+write_rel_csv(split_issue_summary, "13_split_issue_summary.csv")
+write_rel_csv(split_coverage_summary, "14_split_coverage_summary.csv")
+
+split_issue_summary |>
+  knitr::kable(
+    caption = "Table 9 - Split metadata issue summary."
+  )
+
+split_coverage_summary |>
+  knitr::kable(
+    caption = "Table 10 - Split coverage summary."
+  )
+```
+
+# Error files and failure classification
+
+```{r error-files}
+error_files <- fs::dir_ls(LOGS_DIR, recurse = TRUE, regexp = "error\\.txt$")
+
+pipeline_errors <- purrr::map_dfr(
+  error_files,
+  function(path) {
+    path_chr <- as.character(path)
+
+    stage <- case_when(
+      str_detect(normalize_path_for_match(path_chr), "/training/") ~ "training",
+      str_detect(normalize_path_for_match(path_chr), "/inference/") ~ "inference",
+      str_detect(normalize_path_for_match(path_chr), "/metrics/") ~ "metrics",
+      str_detect(normalize_path_for_match(path_chr), "/pairwise_metrics/") ~ "pairwise_metrics",
+      str_detect(normalize_path_for_match(path_chr), "/statistical_analysis/") ~ "statistical_analysis",
+      str_detect(normalize_path_for_match(path_chr), "/error_analysis/") ~ "error_analysis",
+      TRUE ~ NA_character_
+    )
+
+    parts <- stringr::str_split(normalize_path_for_match(path_chr), "/", simplify = TRUE)
+    scenario_guess <- parts[parts %in% scenario_order][1]
+    seed_part <- parts[str_detect(parts, "^seed_")][1]
+    seed_guess <- suppressWarnings(as.integer(str_remove(seed_part, "^seed_")))
+
+    error_text <- paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+
+    tibble(
+      stage = stage,
+      scenario_id = scenario_guess,
+      seed = seed_guess,
+      error_path = path_chr,
+      error_size_bytes = file.info(path_chr)$size,
+      error_category = classify_error_text(error_text),
+      error_text = error_text,
+      error_preview = substr(error_text, 1, 800)
+    )
+  }
+)
+
+if (nrow(pipeline_errors) == 0) {
+  pipeline_errors <- tibble(
+    stage = character(),
+    scenario_id = character(),
+    seed = integer(),
+    error_path = character(),
+    error_size_bytes = numeric(),
+    error_category = character(),
+    error_text = character(),
+    error_preview = character()
+  )
+}
+
+pipeline_errors <- pipeline_errors |>
+  add_scenario_info() |>
+  sort_stages() |>
+  sort_scenarios()
+
+error_category_summary <- if (nrow(pipeline_errors) > 0) {
+  pipeline_errors |>
+    count(stage, stage_label, scenario_id, scenario_short, seed, error_category, name = "n_error_files") |>
+    sort_stages() |>
+    sort_scenarios()
+} else {
+  tibble(
+    stage = character(),
+    stage_label = character(),
+    scenario_id = character(),
+    scenario_short = character(),
+    seed = integer(),
+    error_category = character(),
+    n_error_files = integer()
+  )
+}
+
+write_rel_csv(pipeline_errors, "15_pipeline_error_files_classified.csv")
+write_rel_csv(error_category_summary, "16_error_category_summary.csv")
+
+if (nrow(pipeline_errors) > 0) {
+  pipeline_errors |>
+    select(stage_label, scenario_short, seed, error_category, error_path, error_preview) |>
+    knitr::kable(
+      caption = "Table 11 - Classified error files."
+    )
+} else {
+  cat("No error.txt files found.")
+}
+
+if (nrow(error_category_summary) > 0) {
+  error_category_summary |>
+    knitr::kable(
+      caption = "Table 12 - Error category summary."
+    )
+}
+```
+
+# Expected run coverage
+
+```{r expected-coverage}
+expected_training_runs <- tibble(
+  stage = "training",
+  scenario_id = c("c2_struq_sft", "c3_secalign_dpo", "c4_ih_sft"),
+  expected_training = TRUE
+) |>
+  tidyr::crossing(seed = c(42L, 43L, 44L)) |>
+  add_scenario_info()
+
+actual_training_runs <- run_metadata |>
+  filter(stage == "training") |>
+  distinct(scenario_id, seed, training_status = status_group)
+
+training_coverage <- expected_training_runs |>
+  left_join(actual_training_runs, by = c("scenario_id", "seed")) |>
+  mutate(
+    has_training_metadata = !is.na(training_status),
+    training_completed = training_status == "completed",
+    training_coverage_issue = case_when(
+      !has_training_metadata ~ "missing_training_metadata",
+      training_completed ~ "completed",
+      TRUE ~ paste0("status_", training_status)
+    )
+  ) |>
+  sort_scenarios()
+
+expected_inference_runs <- tidyr::crossing(
+  stage = "inference",
+  scenario_id = scenario_order,
+  seed = c(42L, 43L, 44L)
+) |>
+  # C0 and C1 usually have one seed. Keep all rows but mark expected core run.
+  mutate(
+    expected_core_inference = case_when(
+      scenario_id %in% c("c0_base", "c1_struq_format_only") & seed == 42L ~ TRUE,
+      scenario_id %in% c("c2_struq_sft", "c3_secalign_dpo", "c4_ih_sft") ~ TRUE,
+      TRUE ~ FALSE
+    )
+  ) |>
+  filter(expected_core_inference) |>
+  add_scenario_info()
+
+actual_inference_runs <- run_metadata |>
+  filter(stage == "inference") |>
+  distinct(scenario_id, seed, inference_status = status_group)
+
+inference_coverage <- expected_inference_runs |>
+  left_join(actual_inference_runs, by = c("scenario_id", "seed")) |>
+  mutate(
+    has_inference_metadata = !is.na(inference_status),
+    inference_completed = inference_status == "completed",
+    inference_coverage_issue = case_when(
+      !has_inference_metadata ~ "missing_inference_metadata",
+      inference_completed ~ "completed",
+      TRUE ~ paste0("status_", inference_status)
+    )
+  ) |>
+  sort_scenarios()
+
+write_rel_csv(training_coverage, "17_expected_training_run_coverage.csv")
+write_rel_csv(inference_coverage, "18_expected_inference_run_coverage.csv")
+
+training_coverage |>
+  select(scenario_short, seed, has_training_metadata, training_status, training_coverage_issue) |>
+  knitr::kable(
+    caption = "Table 13 - Expected training run coverage."
+  )
+
+inference_coverage |>
+  select(scenario_short, seed, has_inference_metadata, inference_status, inference_coverage_issue) |>
+  knitr::kable(
+    caption = "Table 14 - Expected inference run coverage."
+  )
+```
+
+# Reliability scorecard
+
+```{r reliability-scorecard}
+stage_scorecard <- stage_paths |>
+  select(stage, stage_label, dir_exists, event_exists, summary_exists) |>
+  left_join(
+    event_integrity_summary |>
+      select(stage, parsed_event_rows, bad_jsonl_lines),
+    by = "stage"
+  ) |>
+  left_join(
+    run_status_summary |>
+      group_by(stage) |>
+      summarise(
+        run_metadata_files = sum(n_runs, na.rm = TRUE),
+        completed_runs = sum(n_runs[status_group == "completed"], na.rm = TRUE),
+        failed_runs = sum(n_runs[status_group == "failed"], na.rm = TRUE),
+        unknown_runs = sum(n_runs[status_group == "unknown"], na.rm = TRUE),
+        .groups = "drop"
+      ),
+    by = "stage"
+  ) |>
+  left_join(
+    pipeline_errors |>
+      count(stage, name = "error_files"),
+    by = "stage"
+  ) |>
+  mutate(
+    parsed_event_rows = replace_na(parsed_event_rows, 0L),
+    bad_jsonl_lines = replace_na(bad_jsonl_lines, 0L),
+    run_metadata_files = replace_na(run_metadata_files, 0L),
+    completed_runs = replace_na(completed_runs, 0L),
+    failed_runs = replace_na(failed_runs, 0L),
+    unknown_runs = replace_na(unknown_runs, 0L),
+    error_files = replace_na(error_files, 0L),
+    run_success_rate = ifelse(run_metadata_files > 0, completed_runs / run_metadata_files, NA_real_),
+    has_reliability_issue = !dir_exists |
+      !event_exists |
+      !summary_exists |
+      bad_jsonl_lines > 0 |
+      failed_runs > 0 |
+      error_files > 0,
+    reliability_score = pmax(
+      0,
+      1 -
+        0.20 * as.numeric(!dir_exists) -
+        0.15 * as.numeric(!event_exists) -
+        0.10 * as.numeric(!summary_exists) -
+        0.20 * pmin(bad_jsonl_lines, 1) -
+        0.20 * pmin(failed_runs, 1) -
+        0.15 * pmin(error_files, 1)
+    ),
+    reliability_label = case_when(
+      reliability_score >= 0.90 ~ "high",
+      reliability_score >= 0.70 ~ "medium",
+      TRUE ~ "low"
+    )
+  ) |>
+  sort_stages()
+
+scenario_scorecard <- scenario_labels |>
+  left_join(
+    run_metadata |>
+      group_by(scenario_id) |>
+      summarise(
+        run_metadata_files = n(),
+        completed_runs = sum(status_group == "completed", na.rm = TRUE),
+        failed_runs = sum(status_group == "failed", na.rm = TRUE),
+        metadata_issues = sum(metadata_issue != "no_obvious_issue", na.rm = TRUE),
+        .groups = "drop"
+      ),
+    by = "scenario_id"
+  ) |>
+  left_join(
+    split_metadata |>
+      group_by(scenario_id) |>
+      summarise(
+        split_metadata_files = n(),
+        split_issues = sum(split_issue != "no_obvious_issue", na.rm = TRUE),
+        output_missing_count = sum(split_issue == "output_path_not_found", na.rm = TRUE),
+        normalized_null_issue_count = sum(split_issue == "has_normalized_nulls", na.rm = TRUE),
+        .groups = "drop"
+      ),
+    by = "scenario_id"
+  ) |>
+  left_join(
+    pipeline_errors |>
+      count(scenario_id, name = "error_files"),
+    by = "scenario_id"
+  ) |>
+  mutate(
+    across(
+      c(
+        run_metadata_files,
+        completed_runs,
+        failed_runs,
+        metadata_issues,
+        split_metadata_files,
+        split_issues,
+        output_missing_count,
+        normalized_null_issue_count,
+        error_files
+      ),
+      ~ replace_na(.x, 0L)
+    ),
+    run_success_rate = ifelse(run_metadata_files > 0, completed_runs / run_metadata_files, NA_real_),
+    has_reliability_issue = failed_runs > 0 |
+      metadata_issues > 0 |
+      split_issues > 0 |
+      error_files > 0,
+    reliability_score = pmax(
+      0,
+      1 -
+        0.25 * pmin(failed_runs, 1) -
+        0.20 * pmin(error_files, 1) -
+        0.20 * pmin(metadata_issues, 1) -
+        0.20 * pmin(output_missing_count, 1) -
+        0.15 * pmin(normalized_null_issue_count, 1)
+    ),
+    reliability_label = case_when(
+      reliability_score >= 0.90 ~ "high",
+      reliability_score >= 0.70 ~ "medium",
+      TRUE ~ "low"
+    )
+  ) |>
+  sort_scenarios()
+
+write_rel_csv(stage_scorecard, "19_stage_reliability_scorecard.csv")
+write_rel_csv(scenario_scorecard, "20_scenario_reliability_scorecard.csv")
+
+stage_scorecard |>
+  mutate(
+    run_success_rate = fmt_pct(run_success_rate),
+    reliability_score = fmt_number(reliability_score, accuracy = 0.001)
+  ) |>
+  knitr::kable(
+    caption = "Table 15 - Stage reliability scorecard."
+  )
+
+scenario_scorecard |>
+  mutate(
+    run_success_rate = fmt_pct(run_success_rate),
+    reliability_score = fmt_number(reliability_score, accuracy = 0.001)
+  ) |>
+  knitr::kable(
+    caption = "Table 16 - Scenario reliability scorecard."
+  )
+```
+
+# Figures
+
+## Stage reliability score
+
+```{r fig-stage-score, fig.width=10, fig.height=6}
+p_stage_score <- stage_scorecard |>
+  ggplot(aes(x = fct_reorder(stage_label, reliability_score), y = reliability_score, fill = stage)) +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  geom_text(
+    aes(label = scales::number(reliability_score, accuracy = 0.001)),
+    hjust = -0.1,
+    size = 3.5
+  ) +
+  coord_flip() +
+  scale_fill_manual(values = stage_palette, drop = FALSE) +
+  scale_y_continuous(limits = c(0, 1.05)) +
+  labs(
+    title = "Stage reliability score",
+    subtitle = "Higher is better. Penalizes missing files, bad JSONL, failed runs, and error files.",
+    x = "Stage",
+    y = "Reliability score"
+  ) +
+  base_theme()
+
+print(p_stage_score)
+
+save_rel_figure(
+  p_stage_score,
+  "01_stage_reliability_score.png",
+  width = 10,
+  height = 6
+)
+```
+
+## Scenario reliability score
+
+```{r fig-scenario-score, fig.width=10, fig.height=6}
+p_scenario_score <- scenario_scorecard |>
+  ggplot(aes(x = scenario_short, y = reliability_score, fill = scenario_short)) +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  geom_text(
+    aes(label = scales::number(reliability_score, accuracy = 0.001)),
+    vjust = -0.4,
+    size = 3.5
+  ) +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(limits = c(0, 1.05)) +
+  labs(
+    title = "Scenario reliability score",
+    subtitle = "Higher is better. Penalizes failed runs, metadata issues, output issues, and error files.",
+    x = "Scenario",
+    y = "Reliability score"
+  ) +
+  base_theme()
+
+print(p_scenario_score)
+
+save_rel_figure(
+  p_scenario_score,
+  "02_scenario_reliability_score.png",
+  width = 10,
+  height = 6
+)
+```
+
+## Event counts by stage
+
+```{r fig-event-counts, fig.width=10.5, fig.height=6}
+if (nrow(event_type_summary) > 0) {
+  p_event_counts <- event_type_summary |>
+    ggplot(aes(x = stage_label, y = n_events, fill = event_type)) +
+    geom_col(width = 0.72) +
+    labs(
+      title = "Event counts by stage",
+      subtitle = "Stacked by event_type.",
+      x = "Stage",
+      y = "Number of events",
+      fill = "Event type"
+    ) +
+    base_theme() +
+    theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+  print(p_event_counts)
+
+  save_rel_figure(
+    p_event_counts,
+    "03_event_counts_by_stage.png",
+    width = 10.5,
+    height = 6
+  )
+}
+```
+
+## Bad JSONL lines by stage
+
+```{r fig-bad-jsonl, fig.width=9.5, fig.height=5.5}
+p_bad_jsonl <- event_integrity_summary |>
+  ggplot(aes(x = stage_label, y = bad_jsonl_lines, fill = stage)) +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  scale_fill_manual(values = stage_palette, drop = FALSE) +
+  labs(
+    title = "Malformed JSONL lines by stage",
+    subtitle = "Non-zero bars indicate event log parse failures.",
+    x = "Stage",
+    y = "Bad JSONL lines"
+  ) +
+  base_theme() +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+print(p_bad_jsonl)
+
+save_rel_figure(
+  p_bad_jsonl,
+  "04_bad_jsonl_lines_by_stage.png",
+  width = 9.5,
+  height = 5.5
+)
+```
+
+## Run status by stage
+
+```{r fig-run-status, fig.width=10.5, fig.height=6}
+if (nrow(run_status_summary) > 0) {
+  p_run_status <- run_status_summary |>
+    ggplot(aes(x = stage_label, y = n_runs, fill = status_group)) +
+    geom_col(width = 0.72) +
+    labs(
+      title = "Run status by stage",
+      subtitle = "Based on run_metadata.json status fields.",
+      x = "Stage",
+      y = "Number of runs",
+      fill = "Status group"
+    ) +
+    base_theme() +
+    theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+  print(p_run_status)
+
+  save_rel_figure(
+    p_run_status,
+    "05_run_status_by_stage.png",
+    width = 10.5,
+    height = 6
+  )
+}
+```
+
+## Error categories
+
+```{r fig-error-categories, fig.width=10.5, fig.height=6}
+if (nrow(error_category_summary) > 0) {
+  p_error_categories <- error_category_summary |>
+    group_by(stage, stage_label, error_category) |>
+    summarise(n_error_files = sum(n_error_files), .groups = "drop") |>
+    ggplot(aes(x = stage_label, y = n_error_files, fill = error_category)) +
+    geom_col(width = 0.72) +
+    labs(
+      title = "Error categories by stage",
+      subtitle = "Classified from error.txt content.",
+      x = "Stage",
+      y = "Number of error files",
+      fill = "Error category"
+    ) +
+    base_theme() +
+    theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+  print(p_error_categories)
+
+  save_rel_figure(
+    p_error_categories,
+    "06_error_categories_by_stage.png",
+    width = 10.5,
+    height = 6
+  )
+}
+```
+
+## Metadata issues by stage
+
+```{r fig-metadata-issues, fig.width=10.5, fig.height=6}
+if (nrow(run_metadata_issue_summary) > 0) {
+  p_metadata_issues <- run_metadata_issue_summary |>
+    ggplot(aes(x = stage_label, y = n_runs, fill = metadata_issue)) +
+    geom_col(width = 0.72) +
+    labs(
+      title = "Run metadata issues by stage",
+      subtitle = "Derived from status, timestamps, and elapsed_seconds fields.",
+      x = "Stage",
+      y = "Number of run metadata files",
+      fill = "Metadata issue"
+    ) +
+    base_theme() +
+    theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+  print(p_metadata_issues)
+
+  save_rel_figure(
+    p_metadata_issues,
+    "07_run_metadata_issues_by_stage.png",
+    width = 10.5,
+    height = 6
+  )
+}
+```
+
+## Split issues by scenario
+
+```{r fig-split-issues, fig.width=10.5, fig.height=6}
+if (nrow(split_issue_summary) > 0) {
+  p_split_issues <- split_issue_summary |>
+    group_by(scenario_short, split_issue) |>
+    summarise(n_split_metadata_files = sum(n_split_metadata_files), .groups = "drop") |>
+    ggplot(aes(x = scenario_short, y = n_split_metadata_files, fill = split_issue)) +
+    geom_col(width = 0.72) +
+    labs(
+      title = "Inference split issues by scenario",
+      subtitle = "Derived from split metadata files.",
+      x = "Scenario",
+      y = "Number of split metadata files",
+      fill = "Split issue"
+    ) +
+    base_theme()
+
+  print(p_split_issues)
+
+  save_rel_figure(
+    p_split_issues,
+    "08_split_issues_by_scenario.png",
+    width = 10.5,
+    height = 6
+  )
+}
+```
+
+## Reliability heatmap
+
+```{r fig-reliability-heatmap, fig.width=10, fig.height=5.5}
+scenario_heatmap <- scenario_scorecard |>
+  select(
+    scenario_short,
+    completed_runs,
+    failed_runs,
+    metadata_issues,
+    split_issues,
+    output_missing_count,
+    normalized_null_issue_count,
+    error_files,
+    reliability_score
+  ) |>
+  mutate(
+    completed_runs_score = ifelse(completed_runs > 0, 1, 0),
+    failed_runs_score = 1 - pmin(failed_runs, 1),
+    metadata_issues_score = 1 - pmin(metadata_issues, 1),
+    split_issues_score = 1 - pmin(split_issues, 1),
+    output_missing_score = 1 - pmin(output_missing_count, 1),
+    normalized_null_score = 1 - pmin(normalized_null_issue_count, 1),
+    error_files_score = 1 - pmin(error_files, 1)
+  ) |>
+  select(
+    scenario_short,
+    completed_runs_score,
+    failed_runs_score,
+    metadata_issues_score,
+    split_issues_score,
+    output_missing_score,
+    normalized_null_score,
+    error_files_score,
+    reliability_score
+  ) |>
+  pivot_longer(
+    cols = -scenario_short,
+    names_to = "dimension",
+    values_to = "score"
+  ) |>
+  mutate(
+    dimension = recode(
+      dimension,
+      completed_runs_score = "Has completed runs",
+      failed_runs_score = "No failed runs",
+      metadata_issues_score = "No metadata issues",
+      split_issues_score = "No split issues",
+      output_missing_score = "No missing outputs",
+      normalized_null_score = "No normalized nulls",
+      error_files_score = "No error files",
+      reliability_score = "Overall score"
+    )
+  )
+
+p_reliability_heatmap <- scenario_heatmap |>
+  ggplot(aes(x = scenario_short, y = fct_rev(factor(dimension)), fill = score)) +
+  geom_tile(color = "white", linewidth = 0.35) +
+  geom_text(aes(label = scales::number(score, accuracy = 0.01)), size = 3) +
+  scale_fill_gradient2(
+    low = "#B2182B",
+    mid = "white",
+    high = "#2166AC",
+    midpoint = 0.5,
+    limits = c(0, 1)
+  ) +
+  labs(
+    title = "Scenario reliability heatmap",
+    subtitle = "All dimensions are oriented so higher is better.",
+    x = "Scenario",
+    y = NULL,
+    fill = "Score"
+  ) +
+  base_theme()
+
+print(p_reliability_heatmap)
+
+save_rel_figure(
+  p_reliability_heatmap,
+  "09_scenario_reliability_heatmap.png",
+  width = 10,
+  height = 5.5
+)
+```
+
+## Event timeline
+
+```{r fig-event-timeline, fig.width=11, fig.height=7}
+if (nrow(all_events) > 0) {
+  timeline_events <- all_events |>
+    filter(!is.na(timestamp)) |>
+    mutate(
+      stage_label_chr = as.character(stage_label),
+      point_alpha = ifelse(event_has_error_signal, 1, 0.65)
+    )
+
+  p_event_timeline <- timeline_events |>
+    ggplot(aes(x = timestamp, y = fct_rev(stage_label_chr), color = stage)) +
+    geom_point(aes(shape = event_has_error_signal), alpha = 0.75, size = 2.2) +
+    scale_color_manual(values = stage_palette, drop = FALSE) +
+    labs(
+      title = "Pipeline event timeline",
+      subtitle = "Error/failure signals are marked with a different point shape.",
+      x = "Time (UTC)",
+      y = "Stage",
+      color = "Stage",
+      shape = "Error signal"
+    ) +
+    base_theme()
+
+  print(p_event_timeline)
+
+  save_rel_figure(
+    p_event_timeline,
+    "10_pipeline_event_timeline.png",
+    width = 11,
+    height = 7
+  )
+}
+```
+
+# Paper-ready reliability table
+
+```{r paper-ready}
+paper_reliability_table <- scenario_scorecard |>
+  select(
+    scenario_short,
+    run_metadata_files,
+    completed_runs,
+    failed_runs,
+    run_success_rate,
+    metadata_issues,
+    split_metadata_files,
+    split_issues,
+    output_missing_count,
+    normalized_null_issue_count,
+    error_files,
+    reliability_score,
+    reliability_label
+  ) |>
+  mutate(
+    run_success_rate = fmt_pct(run_success_rate),
+    reliability_score = fmt_number(reliability_score, accuracy = 0.001)
+  )
+
+write_rel_csv(paper_reliability_table, "21_paper_ready_reliability_table.csv")
+
+paper_reliability_table |>
+  knitr::kable(
+    caption = "Table 17 - Paper-ready reliability table."
+  )
+```
+
+# Interpretation notes
+
+```{r notes, results='asis'}
+cat("
+## How to interpret this report
+
+This report separates three types of reliability evidence.
+
+First, event-log integrity checks whether JSONL logs can be parsed and whether stages emitted start, completion, or failure events.
+
+Second, metadata reliability checks run_metadata.json and split metadata files for missing timestamps, missing elapsed time, failed statuses, missing outputs, and normalized-null counts.
+
+Third, error-file analysis searches for error.txt files and classifies their content into broad failure categories.
+
+The reliability score is a compact diagnostic score. It is not a statistical estimate. It is useful for comparing operational health across stages and scenarios, but the detailed tables should be used to explain the concrete failure modes.
+")
+```
+
+# Generated files
+
+Tables are saved in:
+
+```text
+tables/reliability_failure_analysis/
+```
+
+Figures are saved in:
+
+```text
+figures/reliability_failure_analysis/
+```
+
+Main files:
+
+```text
+01_stage_file_inventory.csv
+02_all_events_enriched.csv
+03_bad_jsonl_lines.csv
+04_event_integrity_summary.csv
+05_event_type_summary.csv
+06_event_scenario_seed_summary.csv
+07_metadata_inventory.csv
+08_metadata_inventory_summary.csv
+09_run_metadata_reliability.csv
+10_run_status_summary.csv
+11_run_metadata_issue_summary.csv
+12_split_metadata_reliability.csv
+13_split_issue_summary.csv
+14_split_coverage_summary.csv
+15_pipeline_error_files_classified.csv
+16_error_category_summary.csv
+17_expected_training_run_coverage.csv
+18_expected_inference_run_coverage.csv
+19_stage_reliability_scorecard.csv
+20_scenario_reliability_scorecard.csv
+21_paper_ready_reliability_table.csv
+
+01_stage_reliability_score.png
+02_scenario_reliability_score.png
+03_event_counts_by_stage.png
+04_bad_jsonl_lines_by_stage.png
+05_run_status_by_stage.png
+06_error_categories_by_stage.png
+07_run_metadata_issues_by_stage.png
+08_split_issues_by_scenario.png
+09_scenario_reliability_heatmap.png
+10_pipeline_event_timeline.png
+```

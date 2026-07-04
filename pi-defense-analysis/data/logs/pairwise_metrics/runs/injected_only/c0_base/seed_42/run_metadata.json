@@ -1,0 +1,38 @@
+{
+  "scenario_id": "c0_base",
+  "seed": 42,
+  "status": "completed_or_reused",
+  "stage": "injected_only",
+  "base_model_id": "meta-llama/Llama-3.1-8B-Instruct",
+  "adapter_path": "NaN",
+  "prompt_strategy": "plain",
+  "result_dir": "/workspace/pi-defense-exp/results/injected_only/full/c0_base/seed_42",
+  "run_log_dir": "/workspace/pi-defense-exp/logs/pairwise_metrics/runs/injected_only/c0_base/seed_42",
+  "started_at_utc": "2026-06-30T04:00:21.051363+00:00",
+  "finished_at_utc": "2026-06-30T04:05:15.097604+00:00",
+  "elapsed_seconds": 294.0462279319763,
+  "splits": [
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_injected_only_seen",
+      "status": "completed",
+      "started_at_utc": "2026-06-30T04:00:25.375669+00:00",
+      "finished_at_utc": "2026-06-30T04:03:20.046401+00:00",
+      "elapsed_seconds": 174.67070078849792,
+      "output_path": "/workspace/pi-defense-exp/results/injected_only/full/c0_base/seed_42/test_injected_only_seen.jsonl",
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_injected_only_unseen",
+      "status": "completed",
+      "started_at_utc": "2026-06-30T04:03:20.046741+00:00",
+      "finished_at_utc": "2026-06-30T04:05:15.097256+00:00",
+      "elapsed_seconds": 115.05048966407776,
+      "output_path": "/workspace/pi-defense-exp/results/injected_only/full/c0_base/seed_42/test_injected_only_unseen.jsonl",
+      "rows": 5628
+    }
+  ]
+}

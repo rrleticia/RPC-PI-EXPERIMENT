@@ -1,0 +1,17 @@
+{
+  "status": "completed",
+  "stage": "win_rate",
+  "defended_scenario_id": "c2_struq_sft",
+  "defended_seed": 2026,
+  "eval_split": "test_clean",
+  "reference_scenario_id": "c0_base",
+  "reference_seed": 42,
+  "judge_model_id": "Qwen/Qwen3-8B",
+  "run_log_dir": "/workspace/pi-defense-exp/logs/pairwise_metrics/runs/win_rate/c2_struq_sft/seed_2026/test_clean",
+  "global_output_path": "/workspace/pi-defense-exp/results/pairwise_metrics/full/win_rate_judgments.jsonl",
+  "group_output_path": "/workspace/pi-defense-exp/logs/pairwise_metrics/runs/win_rate/c2_struq_sft/seed_2026/test_clean/win_rate_judgments.jsonl",
+  "started_at_utc": "2026-06-30T05:26:08.044373+00:00",
+  "finished_at_utc": "2026-06-30T05:26:57.631230+00:00",
+  "elapsed_seconds": 49.586830615997314,
+  "rows": 300
+}

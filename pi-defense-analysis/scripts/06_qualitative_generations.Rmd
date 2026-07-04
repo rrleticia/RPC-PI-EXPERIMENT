@@ -1,0 +1,884 @@
+---
+title: "RPC-PI Experiment — Qualitative Generations"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6,
+  dpi = 300
+)
+
+options(knitr.kable.NA = "—")
+
+required_packages <- c(
+  "tidyverse",
+  "jsonlite",
+  "readr",
+  "ggplot2",
+  "stringr",
+  "forcats",
+  "fs",
+  "here",
+  "knitr",
+  "scales"
+)
+
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(jsonlite)
+library(readr)
+library(ggplot2)
+library(stringr)
+library(forcats)
+library(fs)
+library(here)
+library(knitr)
+library(scales)
+```
+
+# Objetivo
+
+Este R Markdown analisa qualitativamente as **gerações das LLMs** no experimento RPC-PI.
+
+A ideia é complementar as métricas quantitativas com exemplos concretos de:
+
+1. robust wins vs C0;
+2. reduções de seguimento da injeção vs C0;
+3. melhorias limpas vs C0;
+4. regressões limpas vs C0;
+5. saídas inválidas;
+6. falhas compartilhadas entre modelos treinados.
+
+Por padrão, o relatório mostra as saídas geradas (`model_output_raw`), as respostas normalizadas, o `expected_answer`, o `attack_target` e, quando disponível, a resposta de referência do C0.
+
+# Caminhos
+
+```{r paths}
+DATA_DIR <- here::here("data", "results")
+ERROR_DIR <- file.path(DATA_DIR, "error_analysis", "full")
+SAMPLES_DIR <- file.path(ERROR_DIR, "samples")
+SAFE_SAMPLES_DIR <- file.path(ERROR_DIR, "safe_samples")
+INFERENCE_DIR <- file.path(DATA_DIR, "inference", "full")
+
+OUT_TABLE_DIR <- here::here("tables", "qualitative_generations")
+OUT_FIG_DIR <- here::here("figures", "qualitative_generations")
+
+fs::dir_create(OUT_TABLE_DIR)
+fs::dir_create(OUT_FIG_DIR)
+
+if (!dir.exists(DATA_DIR)) {
+  stop(
+    "Não encontrei data/results/. Extraia o ZIP primeiro com: ",
+    "unzip('results.zip', exdir = 'data')"
+  )
+}
+
+if (!dir.exists(SAMPLES_DIR)) {
+  stop("Não encontrei data/results/error_analysis/full/samples/.")
+}
+```
+
+# Configurações
+
+```{r configuration}
+# Número de exemplos mostrados por categoria no HTML.
+N_EXAMPLES_PER_CATEGORY <- 8
+
+# Use TRUE apenas se quiser imprimir prompt_text no HTML.
+# Normalmente é melhor deixar FALSE para manter o relatório compacto.
+INCLUDE_PROMPT_TEXT <- FALSE
+
+# Limites de truncamento para saída bruta.
+RAW_OUTPUT_MAX_CHARS <- 220
+PROMPT_MAX_CHARS <- 450
+```
+
+# Funções auxiliares
+
+```{r helpers}
+scenario_order <- c(
+  "c0_base",
+  "c1_struq_format_only",
+  "c2_struq_sft",
+  "c3_secalign_dpo",
+  "c4_ih_sft"
+)
+
+scenario_labels <- tibble(
+  scenario_id = scenario_order,
+  scenario_short = c("C0", "C1", "C2", "C3", "C4"),
+  scenario_label = c(
+    "C0 — Base model",
+    "C1 — StruQ format-only",
+    "C2 — StruQ-like SFT",
+    "C3 — SecAlign-like DPO",
+    "C4 — Instruction-Hierarchy-like SFT"
+  )
+)
+
+scenario_palette <- c(
+  C0 = "#7F7F7F",
+  C1 = "#D55E00",
+  C2 = "#0072B2",
+  C3 = "#CC79A7",
+  C4 = "#009E73"
+)
+
+read_jsonl_file <- function(path) {
+  if (!file.exists(path)) {
+    return(NULL)
+  }
+
+  con <- file(path, open = "r", encoding = "UTF-8")
+  on.exit(close(con), add = TRUE)
+
+  jsonlite::stream_in(con, verbose = FALSE) |>
+    as_tibble()
+}
+
+truncate_text <- function(x, max_chars = RAW_OUTPUT_MAX_CHARS) {
+  x <- as.character(x)
+  x <- ifelse(is.na(x), NA_character_, x)
+  x <- str_replace_all(x, "\\s+", " ")
+  x <- str_trim(x)
+  ifelse(
+    is.na(x),
+    NA_character_,
+    ifelse(str_length(x) > max_chars, paste0(str_sub(x, 1, max_chars), " …"), x)
+  )
+}
+
+make_scenario_short_from_label <- function(label, scenario_id = NA_character_) {
+  label <- as.character(label)
+  scenario_id <- as.character(scenario_id)
+
+  case_when(
+    str_detect(coalesce(label, ""), "^C0") | scenario_id == "c0_base" ~ "C0",
+    str_detect(coalesce(label, ""), "^C1") | scenario_id == "c1_struq_format_only" ~ "C1",
+    str_detect(coalesce(label, ""), "^C2") | scenario_id == "c2_struq_sft" ~ "C2",
+    str_detect(coalesce(label, ""), "^C3") | scenario_id == "c3_secalign_dpo" ~ "C3",
+    str_detect(coalesce(label, ""), "^C4") | scenario_id == "c4_ih_sft" ~ "C4",
+    TRUE ~ "Shared / aggregate"
+  )
+}
+
+normalize_logical_label <- function(x) {
+  case_when(
+    is.na(x) ~ "—",
+    x %in% TRUE ~ "TRUE",
+    x %in% FALSE ~ "FALSE",
+    TRUE ~ as.character(x)
+  )
+}
+
+add_sample_category_label <- function(df, category) {
+  df |>
+    mutate(
+      sample_category = category,
+      sample_category_label = case_when(
+        category == "robust_wins_vs_c0" ~ "Robust wins vs C0",
+        category == "attack_following_reductions_vs_c0" ~ "Attack-following reductions vs C0",
+        category == "clean_improvements_vs_c0" ~ "Clean improvements vs C0",
+        category == "clean_regressions_vs_c0" ~ "Clean regressions vs C0",
+        category == "invalid_outputs" ~ "Invalid outputs",
+        category == "shared_trained_failures" ~ "Shared trained failures",
+        TRUE ~ category
+      )
+    )
+}
+
+harmonize_sample_columns <- function(df) {
+  # Os JSONL têm categorias diferentes. Em algumas categorias, campos ausentes
+  # ou NaN podem ser lidos como numeric/double; em outras, como character.
+  # Esta harmonização evita erros de bind_rows(), como:
+  # "Can't combine base_id <character> and base_id <double>".
+  text_cols <- c(
+    "scenario_label",
+    "scenario_id",
+    "base_model_id",
+    "adapter_path",
+    "prompt_strategy",
+    "run_mode",
+    "example_id",
+    "base_id",
+    "example_key",
+    "task_name",
+    "attack_type",
+    "expected_answer",
+    "attack_target",
+    "model_output_raw",
+    "normalized_output",
+    "source_file",
+    "prompt_text",
+    "failure_type",
+    "reference_scenario_id",
+    "reference_normalized_output",
+    "reference_model_output_raw",
+    "reference_failure_type",
+    "eval_split",
+    "available_scenarios"
+  )
+
+  logical_cols <- c(
+    "seen_in_training",
+    "is_correct",
+    "followed_attack",
+    "is_attacked_split",
+    "is_valid_output",
+    "is_invalid_output",
+    "reference_is_correct",
+    "reference_followed_attack",
+    "reference_is_valid_output",
+    "robust_win_vs_c0",
+    "clean_regression_vs_c0",
+    "clean_improvement_vs_c0",
+    "attack_following_reduction_vs_c0",
+    "all_scenarios_failed",
+    "all_trained_scenarios_failed"
+  )
+
+  numeric_cols <- c(
+    "reference_seed"
+  )
+
+  df |>
+    mutate(across(any_of(text_cols), as.character)) |>
+    mutate(across(any_of(logical_cols), as.logical)) |>
+    mutate(across(any_of(numeric_cols), as.numeric))
+}
+
+
+prepare_sample_table <- function(df, category, n = N_EXAMPLES_PER_CATEGORY) {
+  if (is.null(df) || nrow(df) == 0) {
+    return(NULL)
+  }
+
+  if (!("scenario_label" %in% names(df))) {
+    df$scenario_label <- NA_character_
+  }
+
+  if (!("scenario_id" %in% names(df))) {
+    df$scenario_id <- NA_character_
+  }
+
+  # Garante que colunas opcionais existam antes do mutate().
+  # Algumas categorias não têm referência C0, saída bruta, prompt ou campos
+  # pareados, então essas colunas precisam ser criadas como NA.
+  optional_character_cols <- c(
+    "scenario_label",
+    "scenario_id",
+    "task_name",
+    "attack_type",
+    "expected_answer",
+    "attack_target",
+    "normalized_output",
+    "reference_normalized_output",
+    "model_output_raw",
+    "reference_model_output_raw",
+    "prompt_text",
+    "failure_type",
+    "reference_failure_type"
+  )
+
+  for (col in optional_character_cols) {
+    if (!(col %in% names(df))) {
+      df[[col]] <- NA_character_
+    }
+  }
+
+  optional_logical_cols <- c(
+    "seen_in_training",
+    "is_correct",
+    "followed_attack",
+    "reference_is_correct",
+    "reference_followed_attack",
+    "robust_win_vs_c0",
+    "clean_regression_vs_c0",
+    "clean_improvement_vs_c0",
+    "attack_following_reduction_vs_c0",
+    "all_scenarios_failed",
+    "all_trained_scenarios_failed"
+  )
+
+  for (col in optional_logical_cols) {
+    if (!(col %in% names(df))) {
+      df[[col]] <- NA
+    }
+  }
+
+  out <- df |>
+    harmonize_sample_columns() |>
+    add_sample_category_label(category) |>
+    mutate(
+      scenario_short = make_scenario_short_from_label(scenario_label, scenario_id),
+      task_name = as.character(task_name),
+      attack_type = as.character(attack_type),
+      seen_in_training = normalize_logical_label(seen_in_training),
+      expected_answer = as.character(expected_answer),
+      attack_target = as.character(attack_target),
+      normalized_output = as.character(normalized_output),
+      reference_normalized_output = as.character(reference_normalized_output),
+      model_output_raw_short = truncate_text(model_output_raw, RAW_OUTPUT_MAX_CHARS),
+      reference_model_output_raw_short = truncate_text(reference_model_output_raw, RAW_OUTPUT_MAX_CHARS),
+      prompt_text_short = truncate_text(prompt_text, PROMPT_MAX_CHARS),
+      failure_type = as.character(failure_type),
+      reference_failure_type = as.character(reference_failure_type)
+    ) |>
+    select(any_of(c(
+      "sample_category",
+      "sample_category_label",
+      "scenario_short",
+      "scenario_label",
+      "example_id",
+      "example_key",
+      "task_name",
+      "attack_type",
+      "seen_in_training",
+      "expected_answer",
+      "attack_target",
+      "normalized_output",
+      "reference_normalized_output",
+      "model_output_raw_short",
+      "reference_model_output_raw_short",
+      "failure_type",
+      "reference_failure_type",
+      "is_correct",
+      "followed_attack",
+      "reference_is_correct",
+      "reference_followed_attack",
+      "robust_win_vs_c0",
+      "clean_regression_vs_c0",
+      "clean_improvement_vs_c0",
+      "attack_following_reduction_vs_c0",
+      "all_scenarios_failed",
+      "all_trained_scenarios_failed",
+      "prompt_text_short"
+    ))) |>
+    head(n)
+
+  if (!INCLUDE_PROMPT_TEXT) {
+    out <- out |>
+      select(-any_of("prompt_text_short"))
+  }
+
+  out
+}
+
+write_qual_csv <- function(df, filename) {
+  readr::write_csv(df, file.path(OUT_TABLE_DIR, filename))
+  invisible(df)
+}
+
+base_theme <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      legend.position = "bottom",
+      plot.title.position = "plot",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey30"),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(face = "bold")
+    )
+}
+
+save_qual_figure <- function(plot, filename, width = 10, height = 6) {
+  ggsave(
+    file.path(OUT_FIG_DIR, filename),
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = 320,
+    bg = "white"
+  )
+  invisible(plot)
+}
+
+fmt_pct <- function(x, accuracy = 0.1) {
+  scales::percent(x, accuracy = accuracy)
+}
+```
+
+# Carregamento das amostras
+
+```{r load-samples}
+sample_categories <- c(
+  "robust_wins_vs_c0",
+  "attack_following_reductions_vs_c0",
+  "clean_improvements_vs_c0",
+  "clean_regressions_vs_c0",
+  "invalid_outputs"
+)
+
+full_samples <- purrr::map(
+  sample_categories,
+  function(category) {
+    path <- file.path(SAMPLES_DIR, paste0(category, ".jsonl"))
+    df <- read_jsonl_file(path)
+
+    if (is.null(df)) {
+      return(NULL)
+    }
+
+    df |>
+      harmonize_sample_columns() |>
+      add_sample_category_label(category)
+  }
+) |>
+  purrr::compact() |>
+  bind_rows()
+
+shared_safe_path <- file.path(SAFE_SAMPLES_DIR, "shared_trained_failures_safe.jsonl")
+shared_trained_failures <- read_jsonl_file(shared_safe_path)
+
+if (!is.null(shared_trained_failures)) {
+  shared_trained_failures <- shared_trained_failures |>
+    harmonize_sample_columns() |>
+    add_sample_category_label("shared_trained_failures")
+}
+
+all_qualitative_samples <- bind_rows(
+  full_samples,
+  shared_trained_failures
+) |>
+  harmonize_sample_columns()
+
+if (nrow(all_qualitative_samples) == 0) {
+  stop("Nenhuma amostra qualitativa foi carregada.")
+}
+
+sample_overview <- all_qualitative_samples |>
+  count(sample_category, sample_category_label, name = "rows") |>
+  arrange(sample_category)
+
+write_qual_csv(sample_overview, "01_sample_categories_overview.csv")
+
+sample_overview |>
+  knitr::kable(
+    caption = "Tabela 1 — Categorias de amostras qualitativas carregadas."
+  )
+```
+
+# Visão geral das gerações nas amostras
+
+```{r sample-generation-overview}
+generation_overview <- all_qualitative_samples |>
+  mutate(
+    scenario_short = make_scenario_short_from_label(
+      if ("scenario_label" %in% names(all_qualitative_samples)) scenario_label else NA_character_,
+      if ("scenario_id" %in% names(all_qualitative_samples)) scenario_id else NA_character_
+    ),
+    has_raw_output = !is.na(model_output_raw) & as.character(model_output_raw) != "",
+    raw_output_chars = ifelse(has_raw_output, str_length(as.character(model_output_raw)), NA_integer_),
+    raw_output_words = ifelse(
+      has_raw_output,
+      str_count(str_trim(as.character(model_output_raw)), "\\S+"),
+      NA_integer_
+    ),
+    has_reference_raw_output = !is.na(reference_model_output_raw) & as.character(reference_model_output_raw) != "",
+    reference_raw_output_chars = ifelse(
+      has_reference_raw_output,
+      str_length(as.character(reference_model_output_raw)),
+      NA_integer_
+    )
+  )
+
+generation_length_summary <- generation_overview |>
+  filter(has_raw_output) |>
+  group_by(sample_category_label, scenario_short) |>
+  summarise(
+    rows = n(),
+    mean_chars = mean(raw_output_chars, na.rm = TRUE),
+    median_chars = median(raw_output_chars, na.rm = TRUE),
+    mean_words = mean(raw_output_words, na.rm = TRUE),
+    median_words = median(raw_output_words, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(sample_category_label, scenario_short)
+
+write_qual_csv(generation_length_summary, "02_generation_length_summary.csv")
+
+generation_length_summary |>
+  knitr::kable(
+    digits = 2,
+    caption = "Tabela 2 — Tamanho das gerações nas amostras qualitativas."
+  )
+```
+
+```{r fig-generation-length, fig.width=10, fig.height=6}
+p_generation_length <- generation_overview |>
+  filter(has_raw_output, scenario_short != "Shared / aggregate") |>
+  ggplot(aes(x = scenario_short, y = raw_output_chars, fill = scenario_short)) +
+  geom_boxplot(outlier.alpha = 0.25, width = 0.7) +
+  facet_wrap(~ sample_category_label, scales = "free_y") +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Raw generation length in qualitative samples",
+    subtitle = "Comprimento em caracteres de model_output_raw nas categorias qualitativas.",
+    x = NULL,
+    y = "Characters",
+    fill = "Scenario"
+  ) +
+  base_theme()
+
+print(p_generation_length)
+
+save_qual_figure(
+  p_generation_length,
+  "01_generation_length_by_category.png",
+  width = 10,
+  height = 6
+)
+```
+
+# Casos qualitativos: robust wins vs C0
+
+Estes exemplos mostram casos em que o cenário avaliado acerta sob ataque enquanto o C0 falha ou segue a injeção.
+
+```{r qualitative-robust-wins}
+robust_wins_df <- read_jsonl_file(file.path(SAMPLES_DIR, "robust_wins_vs_c0.jsonl"))
+robust_wins_table <- prepare_sample_table(robust_wins_df, "robust_wins_vs_c0")
+
+if (is.null(robust_wins_table)) {
+  cat("Amostras robust_wins_vs_c0 não encontradas.")
+} else {
+  write_qual_csv(robust_wins_table, "03_robust_wins_vs_c0_examples.csv")
+
+  robust_wins_table |>
+    select(any_of(c(
+      "scenario_short",
+      "task_name",
+      "attack_type",
+      "seen_in_training",
+      "expected_answer",
+      "attack_target",
+      "normalized_output",
+      "reference_normalized_output",
+      "model_output_raw_short",
+      "reference_model_output_raw_short",
+      "failure_type",
+      "reference_failure_type"
+    ))) |>
+    knitr::kable(
+      caption = "Tabela 3 — Exemplos de robust wins vs C0."
+    )
+}
+```
+
+# Casos qualitativos: redução de seguimento da injeção
+
+Estes exemplos mostram casos em que o C0 segue o ataque, mas o cenário avaliado não segue.
+
+```{r qualitative-attack-following-reductions}
+attack_reduction_df <- read_jsonl_file(file.path(SAMPLES_DIR, "attack_following_reductions_vs_c0.jsonl"))
+attack_reduction_table <- prepare_sample_table(attack_reduction_df, "attack_following_reductions_vs_c0")
+
+if (is.null(attack_reduction_table)) {
+  cat("Amostras attack_following_reductions_vs_c0 não encontradas.")
+} else {
+  write_qual_csv(attack_reduction_table, "04_attack_following_reductions_vs_c0_examples.csv")
+
+  attack_reduction_table |>
+    select(any_of(c(
+      "scenario_short",
+      "task_name",
+      "attack_type",
+      "seen_in_training",
+      "expected_answer",
+      "attack_target",
+      "normalized_output",
+      "reference_normalized_output",
+      "model_output_raw_short",
+      "reference_model_output_raw_short",
+      "attack_following_reduction_vs_c0"
+    ))) |>
+    knitr::kable(
+      caption = "Tabela 4 — Exemplos de redução de seguimento da injeção vs C0."
+    )
+}
+```
+
+# Casos qualitativos: melhorias limpas vs C0
+
+```{r qualitative-clean-improvements}
+clean_improvement_df <- read_jsonl_file(file.path(SAMPLES_DIR, "clean_improvements_vs_c0.jsonl"))
+clean_improvement_table <- prepare_sample_table(clean_improvement_df, "clean_improvements_vs_c0")
+
+if (is.null(clean_improvement_table)) {
+  cat("Amostras clean_improvements_vs_c0 não encontradas.")
+} else {
+  write_qual_csv(clean_improvement_table, "05_clean_improvements_vs_c0_examples.csv")
+
+  clean_improvement_table |>
+    select(any_of(c(
+      "scenario_short",
+      "task_name",
+      "expected_answer",
+      "normalized_output",
+      "reference_normalized_output",
+      "model_output_raw_short",
+      "reference_model_output_raw_short",
+      "clean_improvement_vs_c0"
+    ))) |>
+    knitr::kable(
+      caption = "Tabela 5 — Exemplos de melhorias limpas vs C0."
+    )
+}
+```
+
+# Casos qualitativos: regressões limpas vs C0
+
+Esses exemplos são importantes porque mostram onde o treinamento defensivo pode ter prejudicado a tarefa limpa.
+
+```{r qualitative-clean-regressions}
+clean_regression_df <- read_jsonl_file(file.path(SAMPLES_DIR, "clean_regressions_vs_c0.jsonl"))
+clean_regression_table <- prepare_sample_table(clean_regression_df, "clean_regressions_vs_c0")
+
+if (is.null(clean_regression_table)) {
+  cat("Amostras clean_regressions_vs_c0 não encontradas.")
+} else {
+  write_qual_csv(clean_regression_table, "06_clean_regressions_vs_c0_examples.csv")
+
+  clean_regression_table |>
+    select(any_of(c(
+      "scenario_short",
+      "task_name",
+      "expected_answer",
+      "normalized_output",
+      "reference_normalized_output",
+      "model_output_raw_short",
+      "reference_model_output_raw_short",
+      "clean_regression_vs_c0"
+    ))) |>
+    knitr::kable(
+      caption = "Tabela 6 — Exemplos de regressões limpas vs C0."
+    )
+}
+```
+
+# Casos qualitativos: saídas inválidas
+
+Esses exemplos ajudam a verificar se alguma defesa reduz o seguimento da injeção por meio de respostas não normalizáveis.
+
+```{r qualitative-invalid-outputs}
+invalid_outputs_df <- read_jsonl_file(file.path(SAMPLES_DIR, "invalid_outputs.jsonl"))
+invalid_outputs_table <- prepare_sample_table(invalid_outputs_df, "invalid_outputs")
+
+if (is.null(invalid_outputs_table)) {
+  cat("Amostras invalid_outputs não encontradas.")
+} else {
+  write_qual_csv(invalid_outputs_table, "07_invalid_outputs_examples.csv")
+
+  invalid_outputs_table |>
+    select(any_of(c(
+      "scenario_short",
+      "task_name",
+      "attack_type",
+      "seen_in_training",
+      "expected_answer",
+      "attack_target",
+      "normalized_output",
+      "model_output_raw_short",
+      "failure_type"
+    ))) |>
+    knitr::kable(
+      caption = "Tabela 7 — Exemplos de saídas inválidas."
+    )
+}
+```
+
+# Falhas compartilhadas entre modelos treinados
+
+O arquivo disponível para falhas compartilhadas é a versão segura agregada por exemplo. Ele não inclui `model_output_raw`, mas ajuda a identificar exemplos problemáticos para C2/C3/C4.
+
+```{r qualitative-shared-trained-failures}
+if (is.null(shared_trained_failures)) {
+  cat("Amostras shared_trained_failures não encontradas.")
+} else {
+  shared_failure_table <- prepare_sample_table(shared_trained_failures, "shared_trained_failures")
+
+  write_qual_csv(shared_failure_table, "08_shared_trained_failures_examples.csv")
+
+  shared_failure_table |>
+  mutate(
+    attack_target = ifelse(
+      is.na(attack_target) | attack_target == "",
+      "—",
+      attack_target
+    )
+  ) |>
+  select(any_of(c(
+    "eval_split",
+    "example_key",
+    "task_name",
+    "attack_type",
+    "expected_answer",
+    "attack_target",
+    "all_scenarios_failed",
+    "all_trained_scenarios_failed"
+  ))) |>
+  knitr::kable(
+    caption = "Tabela 8 — Exemplos de falhas compartilhadas entre modelos treinados."
+  )
+}
+```
+
+# Distribuição das respostas normalizadas nas amostras
+
+```{r normalized-output-distribution}
+normalized_distribution <- all_qualitative_samples |>
+  mutate(
+    scenario_short = make_scenario_short_from_label(
+      if ("scenario_label" %in% names(all_qualitative_samples)) scenario_label else NA_character_,
+      if ("scenario_id" %in% names(all_qualitative_samples)) scenario_id else NA_character_
+    ),
+    normalized_output = as.character(normalized_output),
+    normalized_output = ifelse(is.na(normalized_output) | normalized_output == "", "<invalid / missing>", normalized_output)
+  ) |>
+  filter(scenario_short != "Shared / aggregate") |>
+  count(sample_category_label, scenario_short, normalized_output, name = "count") |>
+  group_by(sample_category_label, scenario_short) |>
+  mutate(rate = count / sum(count)) |>
+  ungroup() |>
+  arrange(sample_category_label, scenario_short, desc(count))
+
+write_qual_csv(normalized_distribution, "09_normalized_output_distribution_in_samples.csv")
+
+normalized_distribution |>
+  group_by(sample_category_label, scenario_short) |>
+  slice_max(count, n = 5, with_ties = FALSE) |>
+  ungroup() |>
+  mutate(rate = fmt_pct(rate)) |>
+  knitr::kable(
+    caption = "Tabela 9 — Respostas normalizadas mais frequentes nas amostras."
+  )
+```
+
+```{r fig-normalized-distribution, fig.width=11, fig.height=7}
+top_normalized_distribution <- normalized_distribution |>
+  group_by(sample_category_label, normalized_output) |>
+  summarise(total_count = sum(count), .groups = "drop") |>
+  group_by(sample_category_label) |>
+  slice_max(total_count, n = 6, with_ties = FALSE) |>
+  ungroup() |>
+  select(sample_category_label, normalized_output) |>
+  inner_join(normalized_distribution, by = c("sample_category_label", "normalized_output"))
+
+p_normalized_distribution <- top_normalized_distribution |>
+  ggplot(aes(x = fct_reorder(normalized_output, count), y = count, fill = scenario_short)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  facet_wrap(~ sample_category_label, scales = "free_y") +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Most frequent normalized outputs in qualitative samples",
+    subtitle = "Distribuição das respostas normalizadas nas categorias qualitativas.",
+    x = "Normalized output",
+    y = "Count",
+    fill = "Scenario"
+  ) +
+  base_theme()
+
+print(p_normalized_distribution)
+
+save_qual_figure(
+  p_normalized_distribution,
+  "02_normalized_output_distribution_in_samples.png",
+  width = 11,
+  height = 7
+)
+```
+
+# Padrões de saída bruta
+
+```{r raw-output-patterns}
+raw_output_patterns <- all_qualitative_samples |>
+  mutate(
+    scenario_short = make_scenario_short_from_label(
+      if ("scenario_label" %in% names(all_qualitative_samples)) scenario_label else NA_character_,
+      if ("scenario_id" %in% names(all_qualitative_samples)) scenario_id else NA_character_
+    ),
+    model_output_raw = as.character(model_output_raw),
+    model_output_raw_clean = truncate_text(model_output_raw, 80),
+    has_raw_output = !is.na(model_output_raw_clean) & model_output_raw_clean != ""
+  ) |>
+  filter(has_raw_output, scenario_short != "Shared / aggregate") |>
+  count(sample_category_label, scenario_short, model_output_raw_clean, name = "count") |>
+  group_by(sample_category_label, scenario_short) |>
+  mutate(rate = count / sum(count)) |>
+  ungroup() |>
+  arrange(sample_category_label, scenario_short, desc(count))
+
+write_qual_csv(raw_output_patterns, "10_raw_output_patterns_in_samples.csv")
+
+raw_output_patterns |>
+  group_by(sample_category_label, scenario_short) |>
+  slice_max(count, n = 5, with_ties = FALSE) |>
+  ungroup() |>
+  mutate(rate = fmt_pct(rate)) |>
+  knitr::kable(
+    caption = "Tabela 10 — Padrões de saída bruta mais frequentes nas amostras."
+  )
+```
+
+# Interpretação guiada
+
+Use as tabelas qualitativas para responder perguntas como:
+
+1. **Quando C2/C4 vencem C0, a saída é apenas uma classe curta ou há recusa?**  
+   Verifique `model_output_raw_short` nos robust wins e nas reduções de seguimento.
+
+2. **As regressões limpas são erros sistemáticos em alguma task específica?**  
+   Verifique `task_name`, `expected_answer`, `normalized_output` e `reference_normalized_output`.
+
+3. **As saídas inválidas são respostas longas, recusas ou rótulos fora do label space?**  
+   Verifique `model_output_raw_short` na seção de saídas inválidas.
+
+4. **As falhas compartilhadas aparecem em quais combinações de task e attack type?**  
+   Verifique a tabela de falhas compartilhadas e combine com o `05_error_analysis.Rmd`.
+
+# Arquivos gerados
+
+Este Rmd salva tabelas em:
+
+```text
+tables/qualitative_generations/
+```
+
+e figuras em:
+
+```text
+figures/qualitative_generations/
+```
+
+Arquivos principais:
+
+```text
+01_sample_categories_overview.csv
+02_generation_length_summary.csv
+03_robust_wins_vs_c0_examples.csv
+04_attack_following_reductions_vs_c0_examples.csv
+05_clean_improvements_vs_c0_examples.csv
+06_clean_regressions_vs_c0_examples.csv
+07_invalid_outputs_examples.csv
+08_shared_trained_failures_examples.csv
+09_normalized_output_distribution_in_samples.csv
+10_raw_output_patterns_in_samples.csv
+```

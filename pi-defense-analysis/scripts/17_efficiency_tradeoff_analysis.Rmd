@@ -1,0 +1,1571 @@
+---
+title: "RPC-PI Experiment - Efficiency Trade-off Analysis"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6,
+  dpi = 300
+)
+
+options(knitr.kable.NA = "-")
+
+required_packages <- c(
+  "tidyverse",
+  "readr",
+  "ggplot2",
+  "scales",
+  "stringr",
+  "forcats",
+  "fs",
+  "here",
+  "knitr",
+  "jsonlite",
+  "lubridate"
+)
+
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(scales)
+library(stringr)
+library(forcats)
+library(fs)
+library(here)
+library(knitr)
+library(jsonlite)
+library(lubridate)
+```
+
+# Objective
+
+This R Markdown analyzes the **cost-benefit trade-off** of the defense scenarios.
+
+It joins:
+
+```text
+quality metrics from inference results
+training cost from training logs
+inference cost from inference logs
+optional total pipeline cost from pipeline logs
+```
+
+The main questions are:
+
+```text
+Which defense gives the best robustness gain for its training cost?
+Which defense reduces ASV the most per training hour?
+Which defense is most efficient at inference time?
+Which scenarios are Pareto-efficient when considering quality and cost?
+```
+
+This report is designed to follow:
+
+```text
+14_training_time_analysis.Rmd
+15_inference_time_analysis.Rmd
+16_pipeline_runtime_analysis.Rmd
+```
+
+but it recomputes the core metrics directly from source files when possible.
+
+# Interpretation
+
+Higher is better for:
+
+```text
+clean_accuracy
+robust_accuracy
+robust_gain_vs_c0
+asv_reduction_vs_c0
+robust_retention
+benefit_per_cost
+```
+
+Lower is better for:
+
+```text
+ASV
+inference_seconds_per_example
+training_hours
+pipeline_hours
+invalid_output_rate
+```
+
+C0 is the base reference. C1 has no training cost because it is format-only. C2/C3/C4 have training costs.
+
+# Paths
+
+```{r paths}
+OUT_TABLE_DIR <- here::here("tables", "efficiency_tradeoff_analysis")
+OUT_FIG_DIR <- here::here("figures", "efficiency_tradeoff_analysis")
+
+fs::dir_create(OUT_TABLE_DIR)
+fs::dir_create(OUT_FIG_DIR)
+
+# Try to extract logs.zip automatically if needed.
+if (!dir.exists(here::here("data", "logs")) && file.exists(here::here("logs.zip"))) {
+  dir.create(here::here("data"), showWarnings = FALSE)
+  unzip(here::here("logs.zip"), exdir = here::here("data"))
+}
+
+if (!dir.exists(here::here("data", "logs")) && file.exists(here::here("data", "logs.zip"))) {
+  dir.create(here::here("data"), showWarnings = FALSE)
+  unzip(here::here("data", "logs.zip"), exdir = here::here("data"))
+}
+
+candidate_logs_dirs <- c(
+  here::here("data", "logs"),
+  here::here("logs")
+)
+
+LOGS_DIR <- candidate_logs_dirs[dir.exists(candidate_logs_dirs)][1]
+
+if (is.na(LOGS_DIR)) {
+  stop(
+    "Could not find logs directory. Expected one of:\n",
+    paste(candidate_logs_dirs, collapse = "\n"),
+    "\nOr place logs.zip in the project root or data/."
+  )
+}
+
+DESC_INFERENCE_PATH <- here::here("tables", "descriptive", "01_inference_compact.csv")
+
+if (!file.exists(DESC_INFERENCE_PATH)) {
+  stop(
+    "Could not find tables/descriptive/01_inference_compact.csv. ",
+    "Run 01_descriptive_metrics.Rmd first."
+  )
+}
+
+TRAINING_SUMMARY_PATH <- file.path(LOGS_DIR, "training", "04_run_training_summary.json")
+INFERENCE_RUNS_DIR <- file.path(LOGS_DIR, "inference", "runs")
+PIPELINE_COST_PATH <- here::here("tables", "pipeline_runtime_analysis", "10_scenario_total_pipeline_cost.csv")
+```
+
+# Helper functions
+
+```{r helpers}
+`%||%` <- function(x, y) {
+  if (is.null(x) || length(x) == 0) y else x
+}
+
+scenario_order <- c(
+  "c0_base",
+  "c1_struq_format_only",
+  "c2_struq_sft",
+  "c3_secalign_dpo",
+  "c4_ih_sft"
+)
+
+scenario_labels <- tibble(
+  scenario_id = scenario_order,
+  scenario_short = c("C0", "C1", "C2", "C3", "C4"),
+  scenario_label = c(
+    "C0 - Base model",
+    "C1 - StruQ format-only",
+    "C2 - StruQ-like SFT",
+    "C3 - SecAlign-like DPO",
+    "C4 - Instruction-Hierarchy-like SFT"
+  )
+)
+
+scenario_palette <- c(
+  C0 = "#7F7F7F",
+  C1 = "#D55E00",
+  C2 = "#0072B2",
+  C3 = "#CC79A7",
+  C4 = "#009E73"
+)
+
+sort_scenarios <- function(df) {
+  df |>
+    mutate(
+      scenario_id = factor(as.character(scenario_id), levels = scenario_order),
+      scenario_short = factor(as.character(scenario_short), levels = c("C0", "C1", "C2", "C3", "C4"))
+    ) |>
+    arrange(scenario_id)
+}
+
+add_scenario_info <- function(df) {
+  if (!("scenario_id" %in% names(df))) {
+    df$scenario_id <- NA_character_
+  }
+
+  out <- df |>
+    mutate(scenario_id = as.character(scenario_id)) |>
+    left_join(scenario_labels, by = "scenario_id", suffix = c("", "_lookup"))
+
+  if (!("scenario_label" %in% names(out))) {
+    out$scenario_label <- out$scenario_id
+  }
+
+  if ("scenario_label_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_label = coalesce(
+          as.character(scenario_label),
+          as.character(scenario_label_lookup)
+        )
+      )
+  }
+
+  if (!("scenario_short" %in% names(out))) {
+    out$scenario_short <- NA_character_
+  }
+
+  if ("scenario_short_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_short = coalesce(
+          as.character(scenario_short),
+          as.character(scenario_short_lookup)
+        )
+      )
+  }
+
+  out |>
+    mutate(
+      scenario_short = ifelse(
+        is.na(scenario_short),
+        recode(
+          as.character(scenario_id),
+          c0_base = "C0",
+          c1_struq_format_only = "C1",
+          c2_struq_sft = "C2",
+          c3_secalign_dpo = "C3",
+          c4_ih_sft = "C4",
+          .default = as.character(scenario_id)
+        ),
+        scenario_short
+      )
+    ) |>
+    select(-any_of(c("scenario_label_lookup", "scenario_short_lookup"))) |>
+    sort_scenarios()
+}
+
+to_logical_safe <- function(x) {
+  if (is.logical(x)) return(x)
+
+  x_chr <- tolower(as.character(x))
+
+  case_when(
+    x_chr %in% c("true", "t", "1", "yes") ~ TRUE,
+    x_chr %in% c("false", "f", "0", "no") ~ FALSE,
+    TRUE ~ NA
+  )
+}
+
+safe_mean <- function(x) {
+  if (sum(!is.na(x)) == 0) return(NA_real_)
+  mean(x, na.rm = TRUE)
+}
+
+safe_divide <- function(num, den) {
+  ifelse(
+    is.na(num) | is.na(den) | den <= 0,
+    NA_real_,
+    num / den
+  )
+}
+
+safe_minmax <- function(x, higher_is_better = TRUE) {
+  x <- as.numeric(x)
+
+  if (sum(!is.na(x)) == 0) {
+    return(rep(NA_real_, length(x)))
+  }
+
+  rng <- range(x, na.rm = TRUE)
+
+  if (isTRUE(all.equal(rng[1], rng[2]))) {
+    return(rep(0.5, length(x)))
+  }
+
+  scaled <- (x - rng[1]) / (rng[2] - rng[1])
+
+  if (higher_is_better) {
+    scaled
+  } else {
+    1 - scaled
+  }
+}
+
+parse_time_utc <- function(x) {
+  lubridate::ymd_hms(x, tz = "UTC", quiet = TRUE)
+}
+
+fmt_duration <- function(seconds) {
+  ifelse(
+    is.na(seconds),
+    NA_character_,
+    paste0(
+      floor(seconds / 3600), "h ",
+      floor((seconds %% 3600) / 60), "m ",
+      round(seconds %% 60), "s"
+    )
+  )
+}
+
+fmt_number <- function(x, accuracy = 0.01) {
+  scales::number(x, accuracy = accuracy, big.mark = ",")
+}
+
+fmt_pct <- function(x, accuracy = 0.1) {
+  scales::percent(x, accuracy = accuracy)
+}
+
+base_theme <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      legend.position = "bottom",
+      plot.title.position = "plot",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey30"),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(face = "bold")
+    )
+}
+
+write_eff_csv <- function(df, filename) {
+  readr::write_csv(df, file.path(OUT_TABLE_DIR, filename))
+  invisible(df)
+}
+
+save_eff_figure <- function(plot, filename, width = 10, height = 6) {
+  ggsave(
+    file.path(OUT_FIG_DIR, filename),
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = 320,
+    bg = "white"
+  )
+  invisible(plot)
+}
+
+get_scalar <- function(obj, field, default = NA) {
+  value <- obj[[field]]
+
+  if (is.null(value) || length(value) == 0) {
+    return(default)
+  }
+
+  if (is.data.frame(value)) {
+    if (nrow(value) == 0 || ncol(value) == 0) return(default)
+    return(value[[1]][[1]])
+  }
+
+  if (is.list(value) && length(value) == 1 && !is.null(value[[1]])) {
+    return(value[[1]])
+  }
+
+  value[[1]]
+}
+
+get_nested_scalar <- function(obj, parent, child, default = NA) {
+  flat_name <- paste0(parent, ".", child)
+
+  flat_value <- obj[[flat_name]]
+
+  if (!is.null(flat_value) && length(flat_value) > 0) {
+    return(flat_value[[1]])
+  }
+
+  parent_value <- obj[[parent]]
+
+  if (!is.null(parent_value)) {
+    if (is.data.frame(parent_value) && child %in% names(parent_value)) {
+      return(parent_value[[child]][[1]])
+    }
+
+    if (is.list(parent_value) && !is.null(parent_value[[child]])) {
+      return(parent_value[[child]][[1]])
+    }
+  }
+
+  default
+}
+
+extract_train_metric <- function(df, metric_name, default = NA_real_) {
+  flat_col <- paste0("train_metrics.", metric_name)
+
+  if (flat_col %in% names(df)) {
+    return(as.numeric(df[[flat_col]]))
+  }
+
+  if ("train_metrics" %in% names(df)) {
+    return(purrr::map_dbl(
+      df$train_metrics,
+      function(x) {
+        if (is.null(x)) return(default)
+
+        value <- tryCatch(
+          {
+            if (is.data.frame(x)) {
+              x[[metric_name]][[1]]
+            } else if (is.list(x)) {
+              x[[metric_name]]
+            } else {
+              default
+            }
+          },
+          error = function(e) default
+        )
+
+        if (is.null(value) || length(value) == 0) {
+          default
+        } else {
+          as.numeric(value[[1]])
+        }
+      }
+    ))
+  }
+
+  rep(default, nrow(df))
+}
+
+read_split_metadata_file <- function(path) {
+  obj <- jsonlite::fromJSON(path, flatten = TRUE)
+
+  tibble(
+    scenario_id = as.character(get_scalar(obj, "scenario_id", NA_character_)),
+    seed = as.integer(get_scalar(obj, "seed", NA_integer_)),
+    split = as.character(get_scalar(obj, "split", NA_character_)),
+    status = as.character(get_scalar(obj, "status", NA_character_)),
+    started_at_utc = as.character(get_scalar(obj, "started_at_utc", NA_character_)),
+    finished_at_utc = as.character(get_scalar(obj, "finished_at_utc", NA_character_)),
+    elapsed_seconds = as.numeric(get_scalar(obj, "elapsed_seconds", NA_real_)),
+    rows = as.numeric(get_scalar(obj, "rows", NA_real_)),
+    adapter_path = as.character(get_scalar(obj, "adapter_path", NA_character_)),
+    prompt_strategy = as.character(get_scalar(obj, "prompt_strategy", NA_character_)),
+    max_new_tokens = as.numeric(get_nested_scalar(obj, "generation_config", "max_new_tokens", NA_real_)),
+    metadata_path = as.character(path)
+  )
+}
+
+pareto_front <- function(df, benefit_col, cost_col) {
+  benefit <- df[[benefit_col]]
+  cost <- df[[cost_col]]
+
+  purrr::map_lgl(
+    seq_len(nrow(df)),
+    function(i) {
+      if (is.na(benefit[i]) || is.na(cost[i])) {
+        return(FALSE)
+      }
+
+      dominated <- purrr::map_lgl(
+        seq_len(nrow(df)),
+        function(j) {
+          if (i == j || is.na(benefit[j]) || is.na(cost[j])) {
+            return(FALSE)
+          }
+
+          other_at_least_as_good <- benefit[j] >= benefit[i] & cost[j] <= cost[i]
+          other_strictly_better <- benefit[j] > benefit[i] | cost[j] < cost[i]
+
+          isTRUE(other_at_least_as_good & other_strictly_better)
+        }
+      )
+
+      !any(dominated, na.rm = TRUE)
+    }
+  )
+}
+
+add_pareto_flags <- function(df) {
+  df |>
+    mutate(
+      pareto_robust_vs_training = pareto_front(
+        df,
+        benefit_col = "robust_accuracy",
+        cost_col = "total_training_hours"
+      ),
+      pareto_asv_reduction_vs_training = pareto_front(
+        df,
+        benefit_col = "asv_reduction_vs_c0",
+        cost_col = "total_training_hours"
+      ),
+      pareto_robust_vs_inference = pareto_front(
+        df,
+        benefit_col = "robust_accuracy",
+        cost_col = "inference_seconds_per_example_all_attacks"
+      ),
+      pareto_score_vs_total_cost = pareto_front(
+        df,
+        benefit_col = "balanced_efficiency_score",
+        cost_col = "pipeline_total_hours"
+      )
+    )
+}
+```
+
+# Load quality metrics
+
+```{r load-quality}
+inference_compact <- readr::read_csv(DESC_INFERENCE_PATH, show_col_types = FALSE) |>
+  add_scenario_info()
+
+if (!("eval_group" %in% names(inference_compact))) {
+  inference_compact$eval_group <- dplyr::case_when(
+    inference_compact$eval_split == "test_clean" ~ "clean",
+    inference_compact$eval_split == "test_attacked_seen" ~ "attacked_seen",
+    inference_compact$eval_split == "test_attacked_unseen" ~ "attacked_unseen",
+    TRUE ~ as.character(inference_compact$eval_split)
+  )
+}
+
+if (!("is_correct_flag" %in% names(inference_compact))) {
+  if (all(c("normalized_output", "expected_answer") %in% names(inference_compact))) {
+    inference_compact$is_correct_flag <- inference_compact$normalized_output == inference_compact$expected_answer
+  } else {
+    stop("Cannot compute accuracy: missing is_correct_flag and normalized_output/expected_answer.")
+  }
+}
+
+if (!("followed_attack_flag" %in% names(inference_compact))) {
+  if (all(c("normalized_output", "attack_target") %in% names(inference_compact))) {
+    inference_compact$followed_attack_flag <- inference_compact$normalized_output == inference_compact$attack_target
+  } else {
+    inference_compact$followed_attack_flag <- NA
+  }
+}
+
+if (!("invalid_output_flag" %in% names(inference_compact))) {
+  inference_compact$invalid_output_flag <- NA
+}
+
+examples <- inference_compact |>
+  mutate(
+    seed = as.integer(seed),
+    eval_split = as.character(eval_split),
+    split_group = case_when(
+      eval_split == "test_clean" | eval_group == "clean" ~ "clean",
+      eval_split == "test_attacked_seen" | eval_group == "attacked_seen" ~ "seen",
+      eval_split == "test_attacked_unseen" | eval_group == "attacked_unseen" ~ "unseen",
+      TRUE ~ as.character(eval_group)
+    ),
+    is_attacked_split = split_group %in% c("seen", "unseen"),
+    is_correct_flag = to_logical_safe(is_correct_flag),
+    followed_attack_flag = to_logical_safe(followed_attack_flag),
+    invalid_output_flag = to_logical_safe(invalid_output_flag),
+    task_success_int = as.integer(is_correct_flag),
+    asv_int = as.integer(followed_attack_flag),
+    invalid_output_int = as.integer(invalid_output_flag)
+  ) |>
+  filter(!is.na(task_success_int))
+
+quality_scenario <- examples |>
+  group_by(scenario_id, scenario_short, scenario_label) |>
+  summarise(
+    total_examples = n(),
+    clean_examples = sum(split_group == "clean", na.rm = TRUE),
+    attacked_examples = sum(is_attacked_split, na.rm = TRUE),
+
+    clean_accuracy = safe_mean(task_success_int[split_group == "clean"]),
+    robust_accuracy = safe_mean(task_success_int[is_attacked_split]),
+    robust_accuracy_seen = safe_mean(task_success_int[split_group == "seen"]),
+    robust_accuracy_unseen = safe_mean(task_success_int[split_group == "unseen"]),
+
+    asv_rate = safe_mean(asv_int[is_attacked_split]),
+    asv_rate_seen = safe_mean(asv_int[split_group == "seen"]),
+    asv_rate_unseen = safe_mean(asv_int[split_group == "unseen"]),
+    injection_following_rate = asv_rate,
+
+    invalid_output_rate_clean = safe_mean(invalid_output_int[split_group == "clean"]),
+    invalid_output_rate_attacked = safe_mean(invalid_output_int[is_attacked_split]),
+
+    robust_retention = robust_accuracy / clean_accuracy,
+    robust_minus_clean_accuracy = robust_accuracy - clean_accuracy,
+    .groups = "drop"
+  ) |>
+  sort_scenarios()
+
+c0_quality <- quality_scenario |>
+  filter(scenario_id == "c0_base") |>
+  summarise(
+    c0_clean_accuracy = clean_accuracy[1],
+    c0_robust_accuracy = robust_accuracy[1],
+    c0_asv_rate = asv_rate[1],
+    c0_invalid_output_rate_attacked = invalid_output_rate_attacked[1]
+  )
+
+quality_scenario <- quality_scenario |>
+  mutate(
+    clean_accuracy_delta_vs_c0 = clean_accuracy - c0_quality$c0_clean_accuracy,
+    robust_gain_vs_c0 = robust_accuracy - c0_quality$c0_robust_accuracy,
+    asv_reduction_vs_c0 = c0_quality$c0_asv_rate - asv_rate,
+    invalid_output_delta_vs_c0 = invalid_output_rate_attacked - c0_quality$c0_invalid_output_rate_attacked,
+    utility_drop_vs_c0 = c0_quality$c0_clean_accuracy - clean_accuracy
+  ) |>
+  sort_scenarios()
+
+write_eff_csv(quality_scenario, "01_quality_metrics_by_scenario.csv")
+
+quality_scenario |>
+  select(
+    scenario_short,
+    clean_accuracy,
+    robust_accuracy,
+    robust_gain_vs_c0,
+    asv_rate,
+    asv_reduction_vs_c0,
+    invalid_output_rate_attacked,
+    robust_retention,
+    utility_drop_vs_c0
+  ) |>
+  mutate(across(where(is.numeric), ~ fmt_pct(.x))) |>
+  knitr::kable(
+    caption = "Table 1 - Quality and security metrics by scenario."
+  )
+```
+
+# Load training cost
+
+```{r load-training-cost}
+if (file.exists(TRAINING_SUMMARY_PATH)) {
+  training_summary_json <- jsonlite::fromJSON(TRAINING_SUMMARY_PATH, flatten = TRUE)
+  training_runs_raw <- as_tibble(training_summary_json$training_results)
+
+  training_runs <- training_runs_raw |>
+    mutate(
+      scenario_id = as.character(scenario),
+      seed = as.integer(seed),
+      method = as.character(method),
+      status = as.character(status),
+      elapsed_seconds = as.numeric(elapsed_seconds),
+      train_runtime = extract_train_metric(training_runs_raw, "train_runtime"),
+      train_samples_per_second = extract_train_metric(training_runs_raw, "train_samples_per_second"),
+      train_steps_per_second = extract_train_metric(training_runs_raw, "train_steps_per_second"),
+      total_flos = extract_train_metric(training_runs_raw, "total_flos"),
+      total_pflops = total_flos / 1e15,
+      train_loss = extract_train_metric(training_runs_raw, "train_loss"),
+      train_rows = as.numeric(train_rows),
+      validation_rows = as.numeric(validation_rows)
+    ) |>
+    add_scenario_info() |>
+    sort_scenarios()
+
+  training_cost <- training_runs |>
+    group_by(scenario_id, scenario_short, scenario_label) |>
+    summarise(
+      training_runs = n(),
+      training_completed = sum(status == "completed", na.rm = TRUE),
+      training_seeds = paste(sort(unique(seed)), collapse = ", "),
+      training_method = paste(sort(unique(method)), collapse = ", "),
+      total_training_seconds = sum(elapsed_seconds, na.rm = TRUE),
+      mean_training_seconds = mean(elapsed_seconds, na.rm = TRUE),
+      total_train_runtime_seconds = sum(train_runtime, na.rm = TRUE),
+      mean_training_samples_per_second = mean(train_samples_per_second, na.rm = TRUE),
+      mean_training_steps_per_second = mean(train_steps_per_second, na.rm = TRUE),
+      total_training_pflops = sum(total_pflops, na.rm = TRUE),
+      mean_train_loss = mean(train_loss, na.rm = TRUE),
+      train_rows = max(train_rows, na.rm = TRUE),
+      validation_rows = max(validation_rows, na.rm = TRUE),
+      .groups = "drop"
+    )
+} else {
+  training_runs <- tibble()
+  training_cost <- tibble()
+}
+
+# Add zero training cost for C0 and C1, and any missing scenario.
+training_cost <- scenario_labels |>
+  select(scenario_id, scenario_short, scenario_label) |>
+  left_join(
+    training_cost |>
+      select(-scenario_short, -scenario_label),
+    by = "scenario_id"
+  ) |>
+  mutate(
+    training_runs = replace_na(training_runs, 0L),
+    training_completed = replace_na(training_completed, 0L),
+    training_seeds = ifelse(is.na(training_seeds), "", training_seeds),
+    training_method = ifelse(
+      is.na(training_method),
+      ifelse(scenario_id %in% c("c0_base", "c1_struq_format_only"), "none", "unknown"),
+      training_method
+    ),
+    total_training_seconds = replace_na(total_training_seconds, 0),
+    mean_training_seconds = ifelse(training_runs > 0, mean_training_seconds, 0),
+    total_train_runtime_seconds = replace_na(total_train_runtime_seconds, 0),
+    mean_training_samples_per_second = ifelse(training_runs > 0, mean_training_samples_per_second, NA_real_),
+    mean_training_steps_per_second = ifelse(training_runs > 0, mean_training_steps_per_second, NA_real_),
+    total_training_pflops = replace_na(total_training_pflops, 0),
+    mean_train_loss = ifelse(training_runs > 0, mean_train_loss, NA_real_),
+    train_rows = ifelse(is.infinite(train_rows), NA_real_, train_rows),
+    validation_rows = ifelse(is.infinite(validation_rows), NA_real_, validation_rows),
+    total_training_hours = total_training_seconds / 3600,
+    mean_training_minutes = mean_training_seconds / 60
+  ) |>
+  sort_scenarios()
+
+write_eff_csv(training_runs, "02_training_runs_for_efficiency.csv")
+write_eff_csv(training_cost, "03_training_cost_by_scenario.csv")
+
+training_cost |>
+  select(
+    scenario_short,
+    training_method,
+    training_runs,
+    training_seeds,
+    total_training_hours,
+    mean_training_minutes,
+    total_training_pflops,
+    mean_training_samples_per_second,
+    mean_train_loss
+  ) |>
+  mutate(
+    total_training_hours = fmt_number(total_training_hours),
+    mean_training_minutes = fmt_number(mean_training_minutes),
+    total_training_pflops = fmt_number(total_training_pflops, accuracy = 0.001),
+    mean_training_samples_per_second = fmt_number(mean_training_samples_per_second, accuracy = 0.001),
+    mean_train_loss = fmt_number(mean_train_loss, accuracy = 0.0001)
+  ) |>
+  knitr::kable(
+    caption = "Table 2 - Training cost by scenario."
+  )
+```
+
+# Load inference cost
+
+```{r load-inference-cost}
+split_metadata_files <- if (dir.exists(INFERENCE_RUNS_DIR)) {
+  fs::dir_ls(INFERENCE_RUNS_DIR, recurse = TRUE, regexp = "test_.*_metadata\\.json$")
+} else {
+  character()
+}
+
+if (length(split_metadata_files) == 0) {
+  stop("No inference split metadata files found under: ", INFERENCE_RUNS_DIR)
+}
+
+split_metadata <- purrr::map_dfr(
+  split_metadata_files,
+  read_split_metadata_file
+) |>
+  add_scenario_info() |>
+  mutate(
+    seed = as.integer(seed),
+    split = as.character(split),
+    elapsed_seconds = as.numeric(elapsed_seconds),
+    rows = as.numeric(rows),
+    is_attacked_split = split %in% c("test_attacked_seen", "test_attacked_unseen"),
+    seconds_per_example = elapsed_seconds / rows,
+    examples_per_second = rows / elapsed_seconds,
+    adapter_used = !is.na(adapter_path) & adapter_path != "",
+    prompt_strategy = ifelse(is.na(prompt_strategy) | prompt_strategy == "", "unknown", prompt_strategy)
+  ) |>
+  sort_scenarios()
+
+inference_all_splits <- split_metadata |>
+  group_by(scenario_id, scenario_short, scenario_label, seed) |>
+  summarise(
+    split_group = "all_splits",
+    inference_rows = sum(rows, na.rm = TRUE),
+    inference_seconds = sum(elapsed_seconds, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+inference_all_attacks <- split_metadata |>
+  filter(is_attacked_split) |>
+  group_by(scenario_id, scenario_short, scenario_label, seed) |>
+  summarise(
+    split_group = "all_attacks",
+    inference_rows = sum(rows, na.rm = TRUE),
+    inference_seconds = sum(elapsed_seconds, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+inference_clean <- split_metadata |>
+  filter(split == "test_clean") |>
+  group_by(scenario_id, scenario_short, scenario_label, seed) |>
+  summarise(
+    split_group = "clean",
+    inference_rows = sum(rows, na.rm = TRUE),
+    inference_seconds = sum(elapsed_seconds, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+inference_cost_seed <- bind_rows(
+  inference_clean,
+  inference_all_attacks,
+  inference_all_splits
+) |>
+  mutate(
+    inference_seconds_per_example = inference_seconds / inference_rows,
+    inference_examples_per_second = inference_rows / inference_seconds
+  ) |>
+  sort_scenarios()
+
+inference_cost <- inference_cost_seed |>
+  group_by(scenario_id, scenario_short, scenario_label, split_group) |>
+  summarise(
+    inference_runs = n(),
+    inference_seeds = paste(sort(unique(seed)), collapse = ", "),
+    mean_inference_rows = mean(inference_rows, na.rm = TRUE),
+    total_inference_rows = sum(inference_rows, na.rm = TRUE),
+    mean_inference_seconds = mean(inference_seconds, na.rm = TRUE),
+    total_inference_seconds = sum(inference_seconds, na.rm = TRUE),
+    mean_inference_seconds_per_example = mean(inference_seconds_per_example, na.rm = TRUE),
+    mean_inference_examples_per_second = mean(inference_examples_per_second, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    mean_inference_minutes = mean_inference_seconds / 60,
+    total_inference_hours = total_inference_seconds / 3600
+  ) |>
+  sort_scenarios()
+
+write_eff_csv(split_metadata, "04_inference_split_metadata_for_efficiency.csv")
+write_eff_csv(inference_cost_seed, "05_inference_cost_by_seed.csv")
+write_eff_csv(inference_cost, "06_inference_cost_by_scenario_split.csv")
+
+inference_cost |>
+  filter(split_group %in% c("clean", "all_attacks", "all_splits")) |>
+  select(
+    scenario_short,
+    split_group,
+    inference_runs,
+    inference_seeds,
+    mean_inference_rows,
+    mean_inference_minutes,
+    mean_inference_seconds_per_example,
+    mean_inference_examples_per_second
+  ) |>
+  mutate(
+    mean_inference_rows = fmt_number(mean_inference_rows, accuracy = 1),
+    mean_inference_minutes = fmt_number(mean_inference_minutes),
+    mean_inference_seconds_per_example = fmt_number(mean_inference_seconds_per_example, accuracy = 0.0001),
+    mean_inference_examples_per_second = fmt_number(mean_inference_examples_per_second, accuracy = 0.001)
+  ) |>
+  knitr::kable(
+    caption = "Table 3 - Inference cost by scenario and split group."
+  )
+```
+
+# Optional pipeline cost
+
+```{r load-pipeline-cost}
+if (file.exists(PIPELINE_COST_PATH)) {
+  pipeline_cost_raw <- readr::read_csv(PIPELINE_COST_PATH, show_col_types = FALSE) |>
+    mutate(scenario_id = as.character(scenario_id)) |>
+    add_scenario_info()
+
+  pipeline_cost <- pipeline_cost_raw |>
+    transmute(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      pipeline_total_seconds = as.numeric(total_elapsed_seconds),
+      pipeline_total_hours = as.numeric(total_elapsed_hours),
+      pipeline_training_hours = as.numeric(training_hours),
+      pipeline_inference_hours = as.numeric(inference_hours),
+      pipeline_pairwise_hours = as.numeric(pairwise_hours),
+      pipeline_duration_label = as.character(duration_label)
+    ) |>
+    sort_scenarios()
+} else {
+  pipeline_cost <- scenario_labels |>
+    transmute(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      pipeline_total_seconds = NA_real_,
+      pipeline_total_hours = NA_real_,
+      pipeline_training_hours = NA_real_,
+      pipeline_inference_hours = NA_real_,
+      pipeline_pairwise_hours = NA_real_,
+      pipeline_duration_label = NA_character_
+    )
+}
+
+write_eff_csv(pipeline_cost, "07_optional_pipeline_cost_by_scenario.csv")
+
+pipeline_cost |>
+  select(
+    scenario_short,
+    pipeline_total_hours,
+    pipeline_training_hours,
+    pipeline_inference_hours,
+    pipeline_pairwise_hours,
+    pipeline_duration_label
+  ) |>
+  mutate(
+    pipeline_total_hours = fmt_number(pipeline_total_hours),
+    pipeline_training_hours = fmt_number(pipeline_training_hours),
+    pipeline_inference_hours = fmt_number(pipeline_inference_hours),
+    pipeline_pairwise_hours = fmt_number(pipeline_pairwise_hours)
+  ) |>
+  knitr::kable(
+    caption = "Table 4 - Optional pipeline cost by scenario."
+  )
+```
+
+# Build cost-benefit dataset
+
+```{r build-efficiency-table}
+inference_cost_wide <- inference_cost |>
+  select(
+    scenario_id,
+    split_group,
+    mean_inference_seconds,
+    total_inference_seconds,
+    mean_inference_seconds_per_example,
+    mean_inference_examples_per_second,
+    total_inference_rows
+  ) |>
+  pivot_wider(
+    names_from = split_group,
+    values_from = c(
+      mean_inference_seconds,
+      total_inference_seconds,
+      mean_inference_seconds_per_example,
+      mean_inference_examples_per_second,
+      total_inference_rows
+    ),
+    names_sep = "_"
+  )
+
+efficiency_table <- quality_scenario |>
+  left_join(
+    training_cost |>
+      select(
+        scenario_id,
+        training_method,
+        training_runs,
+        training_completed,
+        training_seeds,
+        total_training_seconds,
+        total_training_hours,
+        mean_training_seconds,
+        mean_training_minutes,
+        total_train_runtime_seconds,
+        total_training_pflops,
+        mean_training_samples_per_second,
+        mean_training_steps_per_second,
+        mean_train_loss
+      ),
+    by = "scenario_id"
+  ) |>
+  left_join(inference_cost_wide, by = "scenario_id") |>
+  left_join(
+    pipeline_cost |>
+      select(
+        scenario_id,
+        pipeline_total_seconds,
+        pipeline_total_hours,
+        pipeline_training_hours,
+        pipeline_inference_hours,
+        pipeline_pairwise_hours
+      ),
+    by = "scenario_id"
+  ) |>
+  mutate(
+    # Main cost axes.
+    inference_seconds_per_example_all_attacks = mean_inference_seconds_per_example_all_attacks,
+    inference_seconds_per_example_all_splits = mean_inference_seconds_per_example_all_splits,
+    inference_examples_per_second_all_attacks = mean_inference_examples_per_second_all_attacks,
+
+    # Benefit per training cost.
+    robust_gain_per_training_hour = safe_divide(robust_gain_vs_c0, total_training_hours),
+    asv_reduction_per_training_hour = safe_divide(asv_reduction_vs_c0, total_training_hours),
+    clean_delta_per_training_hour = safe_divide(clean_accuracy_delta_vs_c0, total_training_hours),
+
+    # Since C1 has zero training cost, compute an alternate indicator for no-training methods.
+    no_training_method = total_training_hours == 0,
+    robust_gain_with_no_training = ifelse(no_training_method, robust_gain_vs_c0, NA_real_),
+    asv_reduction_with_no_training = ifelse(no_training_method, asv_reduction_vs_c0, NA_real_),
+
+    # Benefit per inference cost.
+    robust_accuracy_per_second_per_example = safe_divide(robust_accuracy, inference_seconds_per_example_all_attacks),
+    asv_reduction_per_second_per_example = safe_divide(asv_reduction_vs_c0, inference_seconds_per_example_all_attacks),
+    robust_gain_per_second_per_example = safe_divide(robust_gain_vs_c0, inference_seconds_per_example_all_attacks),
+    clean_accuracy_per_second_per_example = safe_divide(clean_accuracy, inference_seconds_per_example_all_splits),
+
+    # Benefit per total pipeline cost, if pipeline table is available.
+    robust_gain_per_pipeline_hour = safe_divide(robust_gain_vs_c0, pipeline_total_hours),
+    asv_reduction_per_pipeline_hour = safe_divide(asv_reduction_vs_c0, pipeline_total_hours),
+
+    # A compact normalized score for exploratory ranking.
+    score_robust_accuracy = safe_minmax(robust_accuracy, higher_is_better = TRUE),
+    score_asv = safe_minmax(asv_rate, higher_is_better = FALSE),
+    score_clean_accuracy = safe_minmax(clean_accuracy, higher_is_better = TRUE),
+    score_inference_cost = safe_minmax(inference_seconds_per_example_all_attacks, higher_is_better = FALSE),
+    score_training_cost = safe_minmax(total_training_hours, higher_is_better = FALSE),
+
+    balanced_efficiency_score = rowMeans(
+      cbind(
+        score_robust_accuracy,
+        score_asv,
+        score_clean_accuracy,
+        score_inference_cost,
+        score_training_cost
+      ),
+      na.rm = TRUE
+    )
+  ) |>
+  add_pareto_flags() |>
+  sort_scenarios()
+
+write_eff_csv(efficiency_table, "08_efficiency_tradeoff_master_table.csv")
+
+efficiency_table |>
+  select(
+    scenario_short,
+    clean_accuracy,
+    robust_accuracy,
+    robust_gain_vs_c0,
+    asv_rate,
+    asv_reduction_vs_c0,
+    total_training_hours,
+    inference_seconds_per_example_all_attacks,
+    robust_gain_per_training_hour,
+    asv_reduction_per_training_hour,
+    robust_accuracy_per_second_per_example,
+    balanced_efficiency_score,
+    pareto_robust_vs_training,
+    pareto_asv_reduction_vs_training,
+    pareto_robust_vs_inference
+  ) |>
+  mutate(
+    across(
+      c(clean_accuracy, robust_accuracy, robust_gain_vs_c0, asv_rate, asv_reduction_vs_c0),
+      ~ fmt_pct(.x)
+    ),
+    total_training_hours = fmt_number(total_training_hours),
+    inference_seconds_per_example_all_attacks = fmt_number(inference_seconds_per_example_all_attacks, accuracy = 0.0001),
+    robust_gain_per_training_hour = fmt_number(robust_gain_per_training_hour, accuracy = 0.0001),
+    asv_reduction_per_training_hour = fmt_number(asv_reduction_per_training_hour, accuracy = 0.0001),
+    robust_accuracy_per_second_per_example = fmt_number(robust_accuracy_per_second_per_example, accuracy = 0.001),
+    balanced_efficiency_score = fmt_number(balanced_efficiency_score, accuracy = 0.001)
+  ) |>
+  knitr::kable(
+    caption = "Table 5 - Master cost-benefit table."
+  )
+```
+
+# Ranking tables
+
+```{r rankings}
+ranked_by_training_efficiency <- efficiency_table |>
+  mutate(
+    rank_asv_reduction_per_training_hour = rank(-asv_reduction_per_training_hour, ties.method = "min", na.last = "keep"),
+    rank_robust_gain_per_training_hour = rank(-robust_gain_per_training_hour, ties.method = "min", na.last = "keep"),
+    rank_balanced_efficiency = rank(-balanced_efficiency_score, ties.method = "min", na.last = "keep")
+  ) |>
+  select(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    training_method,
+    total_training_hours,
+    robust_gain_vs_c0,
+    asv_reduction_vs_c0,
+    robust_gain_per_training_hour,
+    asv_reduction_per_training_hour,
+    balanced_efficiency_score,
+    rank_asv_reduction_per_training_hour,
+    rank_robust_gain_per_training_hour,
+    rank_balanced_efficiency
+  ) |>
+  arrange(rank_balanced_efficiency)
+
+ranked_by_inference_efficiency <- efficiency_table |>
+  mutate(
+    rank_robust_accuracy_per_second = rank(-robust_accuracy_per_second_per_example, ties.method = "min"),
+    rank_asv_reduction_per_second = rank(-asv_reduction_per_second_per_example, ties.method = "min", na.last = "keep"),
+    rank_seconds_per_example = rank(inference_seconds_per_example_all_attacks, ties.method = "min")
+  ) |>
+  select(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    inference_seconds_per_example_all_attacks,
+    inference_examples_per_second_all_attacks,
+    robust_accuracy,
+    asv_rate,
+    robust_accuracy_per_second_per_example,
+    asv_reduction_per_second_per_example,
+    rank_robust_accuracy_per_second,
+    rank_asv_reduction_per_second,
+    rank_seconds_per_example
+  ) |>
+  arrange(rank_robust_accuracy_per_second)
+
+pareto_summary <- efficiency_table |>
+  select(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    pareto_robust_vs_training,
+    pareto_asv_reduction_vs_training,
+    pareto_robust_vs_inference,
+    pareto_score_vs_total_cost
+  ) |>
+  mutate(
+    pareto_count = rowSums(across(starts_with("pareto_")), na.rm = TRUE)
+  ) |>
+  arrange(desc(pareto_count), scenario_short)
+
+write_eff_csv(ranked_by_training_efficiency, "09_training_efficiency_ranking.csv")
+write_eff_csv(ranked_by_inference_efficiency, "10_inference_efficiency_ranking.csv")
+write_eff_csv(pareto_summary, "11_pareto_efficiency_summary.csv")
+
+ranked_by_training_efficiency |>
+  mutate(
+    total_training_hours = fmt_number(total_training_hours),
+    robust_gain_vs_c0 = fmt_pct(robust_gain_vs_c0),
+    asv_reduction_vs_c0 = fmt_pct(asv_reduction_vs_c0),
+    robust_gain_per_training_hour = fmt_number(robust_gain_per_training_hour, accuracy = 0.0001),
+    asv_reduction_per_training_hour = fmt_number(asv_reduction_per_training_hour, accuracy = 0.0001),
+    balanced_efficiency_score = fmt_number(balanced_efficiency_score, accuracy = 0.001)
+  ) |>
+  knitr::kable(
+    caption = "Table 6 - Training cost-benefit ranking."
+  )
+
+ranked_by_inference_efficiency |>
+  mutate(
+    inference_seconds_per_example_all_attacks = fmt_number(inference_seconds_per_example_all_attacks, accuracy = 0.0001),
+    inference_examples_per_second_all_attacks = fmt_number(inference_examples_per_second_all_attacks, accuracy = 0.001),
+    robust_accuracy = fmt_pct(robust_accuracy),
+    asv_rate = fmt_pct(asv_rate),
+    robust_accuracy_per_second_per_example = fmt_number(robust_accuracy_per_second_per_example, accuracy = 0.001),
+    asv_reduction_per_second_per_example = fmt_number(asv_reduction_per_second_per_example, accuracy = 0.001)
+  ) |>
+  knitr::kable(
+    caption = "Table 7 - Inference cost-benefit ranking."
+  )
+
+pareto_summary |>
+  knitr::kable(
+    caption = "Table 8 - Pareto-front membership summary."
+  )
+```
+
+# Cost-benefit figures
+
+## Robust accuracy vs training cost
+
+```{r fig-robust-vs-training, fig.width=9.5, fig.height=6.5}
+p_robust_training <- efficiency_table |>
+  ggplot(aes(x = total_training_hours, y = robust_accuracy, color = scenario_short, label = scenario_short)) +
+  geom_point(aes(size = asv_reduction_vs_c0), alpha = 0.9) +
+  geom_text(nudge_y = 0.015, show.legend = FALSE) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_size_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Robust accuracy vs training cost",
+    subtitle = "Ideal region is upper-left: high robust accuracy with low training time.",
+    x = "Total training time (hours)",
+    y = "Robust accuracy",
+    color = "Scenario",
+    size = "ASV reduction vs C0"
+  ) +
+  base_theme()
+
+print(p_robust_training)
+
+save_eff_figure(
+  p_robust_training,
+  "01_robust_accuracy_vs_training_cost.png",
+  width = 9.5,
+  height = 6.5
+)
+```
+
+## ASV reduction vs training cost
+
+```{r fig-asv-reduction-training, fig.width=9.5, fig.height=6.5}
+p_asv_training <- efficiency_table |>
+  ggplot(aes(x = total_training_hours, y = asv_reduction_vs_c0, color = scenario_short, label = scenario_short)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey45") +
+  geom_point(aes(size = robust_accuracy), alpha = 0.9) +
+  geom_text(nudge_y = 0.015, show.legend = FALSE) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_size_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "ASV reduction vs training cost",
+    subtitle = "Ideal region is upper-left: high ASV reduction with low training time.",
+    x = "Total training time (hours)",
+    y = "ASV reduction vs C0",
+    color = "Scenario",
+    size = "Robust accuracy"
+  ) +
+  base_theme()
+
+print(p_asv_training)
+
+save_eff_figure(
+  p_asv_training,
+  "02_asv_reduction_vs_training_cost.png",
+  width = 9.5,
+  height = 6.5
+)
+```
+
+## Robust accuracy vs inference cost
+
+```{r fig-robust-vs-inference, fig.width=9.5, fig.height=6.5}
+p_robust_inference <- efficiency_table |>
+  ggplot(aes(x = inference_seconds_per_example_all_attacks, y = robust_accuracy, color = scenario_short, label = scenario_short)) +
+  geom_point(aes(size = asv_reduction_vs_c0), alpha = 0.9) +
+  geom_text(nudge_y = 0.015, show.legend = FALSE) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_size_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Robust accuracy vs inference cost",
+    subtitle = "Ideal region is upper-left: high robust accuracy with low seconds per example.",
+    x = "Inference seconds per example, all attacks",
+    y = "Robust accuracy",
+    color = "Scenario",
+    size = "ASV reduction vs C0"
+  ) +
+  base_theme()
+
+print(p_robust_inference)
+
+save_eff_figure(
+  p_robust_inference,
+  "03_robust_accuracy_vs_inference_cost.png",
+  width = 9.5,
+  height = 6.5
+)
+```
+
+## ASV vs inference cost
+
+```{r fig-asv-vs-inference, fig.width=9.5, fig.height=6.5}
+p_asv_inference <- efficiency_table |>
+  ggplot(aes(x = inference_seconds_per_example_all_attacks, y = asv_rate, color = scenario_short, label = scenario_short)) +
+  geom_point(aes(size = robust_accuracy), alpha = 0.9) +
+  geom_text(nudge_y = 0.015, show.legend = FALSE) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_size_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "ASV vs inference cost",
+    subtitle = "Ideal region is lower-left: low ASV with low seconds per example.",
+    x = "Inference seconds per example, all attacks",
+    y = "ASV",
+    color = "Scenario",
+    size = "Robust accuracy"
+  ) +
+  base_theme()
+
+print(p_asv_inference)
+
+save_eff_figure(
+  p_asv_inference,
+  "04_asv_vs_inference_cost.png",
+  width = 9.5,
+  height = 6.5
+)
+```
+
+## Cost-benefit bars
+
+```{r fig-efficiency-bars, fig.width=10.5, fig.height=7}
+efficiency_bar_data <- efficiency_table |>
+  select(
+    scenario_short,
+    robust_gain_per_training_hour,
+    asv_reduction_per_training_hour,
+    robust_accuracy_per_second_per_example,
+    asv_reduction_per_second_per_example
+  ) |>
+  pivot_longer(
+    cols = -scenario_short,
+    names_to = "efficiency_metric",
+    values_to = "value"
+  ) |>
+  mutate(
+    efficiency_metric = recode(
+      efficiency_metric,
+      robust_gain_per_training_hour = "Robust gain per training hour",
+      asv_reduction_per_training_hour = "ASV reduction per training hour",
+      robust_accuracy_per_second_per_example = "Robust accuracy per inference second",
+      asv_reduction_per_second_per_example = "ASV reduction per inference second"
+    )
+  )
+
+p_efficiency_bars <- efficiency_bar_data |>
+  ggplot(aes(x = scenario_short, y = value, fill = scenario_short)) +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  facet_wrap(~ efficiency_metric, scales = "free_y") +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Cost-benefit efficiency metrics",
+    subtitle = "Higher values are better. Training-hour metrics are undefined for zero-training baselines.",
+    x = "Scenario",
+    y = "Efficiency value"
+  ) +
+  base_theme()
+
+print(p_efficiency_bars)
+
+save_eff_figure(
+  p_efficiency_bars,
+  "05_cost_benefit_efficiency_bars.png",
+  width = 10.5,
+  height = 7
+)
+```
+
+## Balanced efficiency score
+
+```{r fig-balanced-score, fig.width=10, fig.height=6}
+p_balanced_score <- efficiency_table |>
+  ggplot(aes(x = fct_reorder(scenario_short, balanced_efficiency_score), y = balanced_efficiency_score, fill = scenario_short)) +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  geom_text(
+    aes(label = scales::number(balanced_efficiency_score, accuracy = 0.001)),
+    hjust = -0.1,
+    size = 3.5
+  ) +
+  coord_flip() +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Exploratory balanced efficiency score",
+    subtitle = "Mean of normalized robust accuracy, low ASV, clean accuracy, low inference cost, and low training cost.",
+    x = "Scenario",
+    y = "Balanced efficiency score"
+  ) +
+  base_theme()
+
+print(p_balanced_score)
+
+save_eff_figure(
+  p_balanced_score,
+  "06_balanced_efficiency_score.png",
+  width = 10,
+  height = 6
+)
+```
+
+## Pareto-front summary
+
+```{r fig-pareto-summary, fig.width=9.5, fig.height=5.5}
+p_pareto <- pareto_summary |>
+  ggplot(aes(x = scenario_short, y = pareto_count, fill = scenario_short)) +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(breaks = 0:4) +
+  labs(
+    title = "Pareto-front membership count",
+    subtitle = "Counts how often each scenario is non-dominated across selected benefit-cost views.",
+    x = "Scenario",
+    y = "Pareto-front count"
+  ) +
+  base_theme()
+
+print(p_pareto)
+
+save_eff_figure(
+  p_pareto,
+  "07_pareto_front_membership_count.png",
+  width = 9.5,
+  height = 5.5
+)
+```
+
+## Training, inference, and quality heatmap
+
+```{r fig-summary-heatmap, fig.width=11, fig.height=6.5}
+heatmap_data <- efficiency_table |>
+  select(
+    scenario_short,
+    clean_accuracy,
+    robust_accuracy,
+    asv_rate,
+    invalid_output_rate_attacked,
+    total_training_hours,
+    inference_seconds_per_example_all_attacks,
+    balanced_efficiency_score
+  ) |>
+  mutate(
+    clean_accuracy = safe_minmax(clean_accuracy, higher_is_better = TRUE),
+    robust_accuracy = safe_minmax(robust_accuracy, higher_is_better = TRUE),
+    asv_rate = safe_minmax(asv_rate, higher_is_better = FALSE),
+    invalid_output_rate_attacked = safe_minmax(invalid_output_rate_attacked, higher_is_better = FALSE),
+    total_training_hours = safe_minmax(total_training_hours, higher_is_better = FALSE),
+    inference_seconds_per_example_all_attacks = safe_minmax(inference_seconds_per_example_all_attacks, higher_is_better = FALSE),
+    balanced_efficiency_score = safe_minmax(balanced_efficiency_score, higher_is_better = TRUE)
+  ) |>
+  pivot_longer(
+    cols = -scenario_short,
+    names_to = "dimension",
+    values_to = "normalized_score"
+  ) |>
+  mutate(
+    dimension = recode(
+      dimension,
+      clean_accuracy = "Clean accuracy",
+      robust_accuracy = "Robust accuracy",
+      asv_rate = "Low ASV",
+      invalid_output_rate_attacked = "Low invalid output",
+      total_training_hours = "Low training cost",
+      inference_seconds_per_example_all_attacks = "Low inference cost",
+      balanced_efficiency_score = "Balanced score"
+    )
+  )
+
+p_heatmap <- heatmap_data |>
+  ggplot(aes(x = scenario_short, y = fct_rev(factor(dimension)), fill = normalized_score)) +
+  geom_tile(color = "white", linewidth = 0.35) +
+  geom_text(aes(label = scales::number(normalized_score, accuracy = 0.01)), size = 3) +
+  scale_fill_gradient2(
+    low = "#B2182B",
+    mid = "white",
+    high = "#2166AC",
+    midpoint = 0.5,
+    limits = c(0, 1)
+  ) +
+  labs(
+    title = "Normalized quality-cost profile",
+    subtitle = "All dimensions are oriented so higher is better.",
+    x = "Scenario",
+    y = NULL,
+    fill = "Normalized score"
+  ) +
+  base_theme()
+
+print(p_heatmap)
+
+save_eff_figure(
+  p_heatmap,
+  "08_normalized_quality_cost_profile.png",
+  width = 11,
+  height = 6.5
+)
+```
+
+# Paper-ready table
+
+```{r paper-ready}
+paper_efficiency_table <- efficiency_table |>
+  select(
+    scenario_short,
+    training_method,
+    clean_accuracy,
+    robust_accuracy,
+    robust_gain_vs_c0,
+    asv_rate,
+    asv_reduction_vs_c0,
+    invalid_output_rate_attacked,
+    total_training_hours,
+    inference_seconds_per_example_all_attacks,
+    robust_gain_per_training_hour,
+    asv_reduction_per_training_hour,
+    robust_accuracy_per_second_per_example,
+    asv_reduction_per_second_per_example,
+    balanced_efficiency_score,
+    pareto_robust_vs_training,
+    pareto_asv_reduction_vs_training,
+    pareto_robust_vs_inference
+  ) |>
+  mutate(
+    clean_accuracy = fmt_pct(clean_accuracy),
+    robust_accuracy = fmt_pct(robust_accuracy),
+    robust_gain_vs_c0 = fmt_pct(robust_gain_vs_c0),
+    asv_rate = fmt_pct(asv_rate),
+    asv_reduction_vs_c0 = fmt_pct(asv_reduction_vs_c0),
+    invalid_output_rate_attacked = fmt_pct(invalid_output_rate_attacked),
+    total_training_hours = fmt_number(total_training_hours),
+    inference_seconds_per_example_all_attacks = fmt_number(inference_seconds_per_example_all_attacks, accuracy = 0.0001),
+    robust_gain_per_training_hour = fmt_number(robust_gain_per_training_hour, accuracy = 0.0001),
+    asv_reduction_per_training_hour = fmt_number(asv_reduction_per_training_hour, accuracy = 0.0001),
+    robust_accuracy_per_second_per_example = fmt_number(robust_accuracy_per_second_per_example, accuracy = 0.001),
+    asv_reduction_per_second_per_example = fmt_number(asv_reduction_per_second_per_example, accuracy = 0.001),
+    balanced_efficiency_score = fmt_number(balanced_efficiency_score, accuracy = 0.001)
+  )
+
+write_eff_csv(paper_efficiency_table, "12_paper_ready_efficiency_tradeoff_table.csv")
+
+paper_efficiency_table |>
+  knitr::kable(
+    caption = "Table 9 - Paper-ready efficiency trade-off table."
+  )
+```
+
+# Interpretation notes
+
+```{r methodological-notes, results='asis'}
+cat("
+## How to interpret this report
+
+This analysis connects defense quality with experimental cost.
+
+Training-hour efficiency is meaningful mainly for C2, C3, and C4, because those scenarios have actual training runs. C0 and C1 have zero training cost, so ratios per training hour are undefined. For C1, the relevant interpretation is whether a format-only defense gives improvement without training.
+
+Inference-cost efficiency uses seconds per example as the normalized cost metric. It answers whether a scenario is expensive to run after training.
+
+The balanced efficiency score is exploratory. It combines normalized dimensions into one number, but it should not replace the individual metrics. It is useful for ranking and visualization, while the final interpretation should still inspect robust accuracy, ASV, clean utility, and cost separately.
+
+Pareto-front membership means that no other scenario is simultaneously at least as good in benefit and at least as cheap in cost, with one strict improvement.
+")
+```
+
+# Generated files
+
+Tables are saved in:
+
+```text
+tables/efficiency_tradeoff_analysis/
+```
+
+Figures are saved in:
+
+```text
+figures/efficiency_tradeoff_analysis/
+```
+
+Main files:
+
+```text
+01_quality_metrics_by_scenario.csv
+02_training_runs_for_efficiency.csv
+03_training_cost_by_scenario.csv
+04_inference_split_metadata_for_efficiency.csv
+05_inference_cost_by_seed.csv
+06_inference_cost_by_scenario_split.csv
+07_optional_pipeline_cost_by_scenario.csv
+08_efficiency_tradeoff_master_table.csv
+09_training_efficiency_ranking.csv
+10_inference_efficiency_ranking.csv
+11_pareto_efficiency_summary.csv
+12_paper_ready_efficiency_tradeoff_table.csv
+
+01_robust_accuracy_vs_training_cost.png
+02_asv_reduction_vs_training_cost.png
+03_robust_accuracy_vs_inference_cost.png
+04_asv_vs_inference_cost.png
+05_cost_benefit_efficiency_bars.png
+06_balanced_efficiency_score.png
+07_pareto_front_membership_count.png
+08_normalized_quality_cost_profile.png
+```

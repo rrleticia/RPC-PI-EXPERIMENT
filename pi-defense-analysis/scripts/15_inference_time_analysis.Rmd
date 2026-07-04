@@ -1,0 +1,1763 @@
+---
+title: "RPC-PI Experiment - Inference Time Analysis"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6,
+  dpi = 300
+)
+
+options(knitr.kable.NA = "-")
+
+required_packages <- c(
+  "tidyverse",
+  "readr",
+  "ggplot2",
+  "scales",
+  "stringr",
+  "forcats",
+  "fs",
+  "here",
+  "knitr",
+  "jsonlite",
+  "lubridate"
+)
+
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(scales)
+library(stringr)
+library(forcats)
+library(fs)
+library(here)
+library(knitr)
+library(jsonlite)
+library(lubridate)
+```
+
+# Objective
+
+This R Markdown analyzes **inference cost**.
+
+The main questions are:
+
+```text
+How long does inference take for each scenario?
+Does the defense add inference overhead?
+Which split is more expensive?
+How many examples per second does each scenario process?
+How does inference cost relate to task utility and attack success?
+```
+
+This report uses:
+
+```text
+logs/inference/05_run_inference_summary.json
+logs/inference/05_run_inference_events.jsonl
+logs/inference/runs/.../run_metadata.json
+logs/inference/runs/.../test_*_metadata.json
+```
+
+It also optionally joins automatic metrics from:
+
+```text
+tables/descriptive/01_inference_compact.csv
+```
+
+when that file exists.
+
+# Expected folder structure
+
+This Rmd expects the logs extracted into one of these locations:
+
+```text
+data/logs/inference/
+logs/inference/
+```
+
+If `logs.zip` exists in the project root or inside `data/`, this Rmd tries to extract it automatically to `data/`.
+
+# Paths
+
+```{r paths}
+OUT_TABLE_DIR <- here::here("tables", "inference_time_analysis")
+OUT_FIG_DIR <- here::here("figures", "inference_time_analysis")
+
+fs::dir_create(OUT_TABLE_DIR)
+fs::dir_create(OUT_FIG_DIR)
+
+# Try to extract logs.zip automatically if needed.
+if (!dir.exists(here::here("data", "logs")) && file.exists(here::here("logs.zip"))) {
+  dir.create(here::here("data"), showWarnings = FALSE)
+  unzip(here::here("logs.zip"), exdir = here::here("data"))
+}
+
+if (!dir.exists(here::here("data", "logs")) && file.exists(here::here("data", "logs.zip"))) {
+  dir.create(here::here("data"), showWarnings = FALSE)
+  unzip(here::here("data", "logs.zip"), exdir = here::here("data"))
+}
+
+candidate_inference_dirs <- c(
+  here::here("data", "logs", "inference"),
+  here::here("logs", "inference")
+)
+
+INFERENCE_LOG_DIR <- candidate_inference_dirs[dir.exists(candidate_inference_dirs)][1]
+
+if (is.na(INFERENCE_LOG_DIR)) {
+  stop(
+    "Could not find inference logs. Expected one of:\n",
+    paste(candidate_inference_dirs, collapse = "\n"),
+    "\nOr place logs.zip in the project root or data/."
+  )
+}
+
+SUMMARY_PATH <- file.path(INFERENCE_LOG_DIR, "05_run_inference_summary.json")
+EVENTS_PATH <- file.path(INFERENCE_LOG_DIR, "05_run_inference_events.jsonl")
+RUNS_DIR <- file.path(INFERENCE_LOG_DIR, "runs")
+DESC_INFERENCE_PATH <- here::here("tables", "descriptive", "01_inference_compact.csv")
+
+if (!file.exists(SUMMARY_PATH)) {
+  stop("Could not find inference summary JSON: ", SUMMARY_PATH)
+}
+```
+
+# Helper functions
+
+```{r helpers}
+`%||%` <- function(x, y) {
+  if (is.null(x) || length(x) == 0) y else x
+}
+
+scenario_order <- c(
+  "c0_base",
+  "c1_struq_format_only",
+  "c2_struq_sft",
+  "c3_secalign_dpo",
+  "c4_ih_sft"
+)
+
+scenario_labels <- tibble(
+  scenario_id = scenario_order,
+  scenario_short = c("C0", "C1", "C2", "C3", "C4"),
+  scenario_label = c(
+    "C0 - Base model",
+    "C1 - StruQ format-only",
+    "C2 - StruQ-like SFT",
+    "C3 - SecAlign-like DPO",
+    "C4 - Instruction-Hierarchy-like SFT"
+  )
+)
+
+scenario_palette <- c(
+  C0 = "#7F7F7F",
+  C1 = "#D55E00",
+  C2 = "#0072B2",
+  C3 = "#CC79A7",
+  C4 = "#009E73"
+)
+
+split_labels <- c(
+  test_clean = "Clean",
+  test_attacked_seen = "Attacked seen",
+  test_attacked_unseen = "Attacked unseen",
+  all_splits = "All splits",
+  all_attacks = "All attacks"
+)
+
+split_order <- c(
+  "test_clean",
+  "test_attacked_seen",
+  "test_attacked_unseen",
+  "all_attacks",
+  "all_splits"
+)
+
+sort_scenarios <- function(df) {
+  df |>
+    mutate(
+      scenario_id = factor(as.character(scenario_id), levels = scenario_order),
+      scenario_short = factor(as.character(scenario_short), levels = c("C0", "C1", "C2", "C3", "C4"))
+    ) |>
+    arrange(scenario_id)
+}
+
+add_scenario_info <- function(df) {
+  out <- df |>
+    mutate(scenario_id = as.character(scenario_id)) |>
+    left_join(scenario_labels, by = "scenario_id", suffix = c("", "_lookup"))
+
+  if (!("scenario_label" %in% names(out))) {
+    out$scenario_label <- out$scenario_id
+  }
+
+  if ("scenario_label_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_label = coalesce(
+          as.character(scenario_label),
+          as.character(scenario_label_lookup)
+        )
+      )
+  }
+
+  if (!("scenario_short" %in% names(out))) {
+    out$scenario_short <- NA_character_
+  }
+
+  if ("scenario_short_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_short = coalesce(
+          as.character(scenario_short),
+          as.character(scenario_short_lookup)
+        )
+      )
+  }
+
+  out |>
+    mutate(
+      scenario_short = ifelse(
+        is.na(scenario_short),
+        recode(
+          as.character(scenario_id),
+          c0_base = "C0",
+          c1_struq_format_only = "C1",
+          c2_struq_sft = "C2",
+          c3_secalign_dpo = "C3",
+          c4_ih_sft = "C4",
+          .default = as.character(scenario_id)
+        ),
+        scenario_short
+      )
+    ) |>
+    select(-any_of(c("scenario_label_lookup", "scenario_short_lookup"))) |>
+    sort_scenarios()
+}
+
+get_scalar <- function(obj, field, default = NA) {
+  value <- obj[[field]]
+
+  if (is.null(value) || length(value) == 0) {
+    return(default)
+  }
+
+  if (is.data.frame(value)) {
+    if (nrow(value) == 0 || ncol(value) == 0) return(default)
+    return(value[[1]][[1]])
+  }
+
+  if (is.list(value) && length(value) == 1 && !is.null(value[[1]])) {
+    return(value[[1]])
+  }
+
+  value[[1]]
+}
+
+get_nested_scalar <- function(obj, parent, child, default = NA) {
+  flat_name <- paste0(parent, ".", child)
+
+  flat_value <- obj[[flat_name]]
+
+  if (!is.null(flat_value) && length(flat_value) > 0) {
+    return(flat_value[[1]])
+  }
+
+  parent_value <- obj[[parent]]
+
+  if (!is.null(parent_value)) {
+    if (is.data.frame(parent_value) && child %in% names(parent_value)) {
+      return(parent_value[[child]][[1]])
+    }
+
+    if (is.list(parent_value) && !is.null(parent_value[[child]])) {
+      return(parent_value[[child]][[1]])
+    }
+  }
+
+  default
+}
+
+replace_null_columns <- function(x) {
+  if (!is.list(x)) {
+    return(x)
+  }
+
+  n <- 1
+  non_null_lengths <- purrr::map_int(
+    x,
+    function(value) {
+      if (is.null(value)) {
+        0L
+      } else if (is.data.frame(value)) {
+        nrow(value)
+      } else {
+        length(value)
+      }
+    }
+  )
+
+  if (any(non_null_lengths > 0)) {
+    n <- max(non_null_lengths)
+  }
+
+  purrr::map(
+    x,
+    function(value) {
+      if (is.null(value)) {
+        rep(NA_character_, n)
+      } else {
+        value
+      }
+    }
+  )
+}
+
+as_tibble_json_safe <- function(x) {
+  if (is.null(x)) {
+    return(tibble())
+  }
+
+  if (is.data.frame(x)) {
+    x <- replace_null_columns(x)
+    return(tibble::as_tibble(x))
+  }
+
+  if (is.list(x)) {
+    x <- replace_null_columns(x)
+    return(tibble::as_tibble(x))
+  }
+
+  tibble(value = x)
+}
+
+parse_time_utc <- function(x) {
+  lubridate::ymd_hms(x, tz = "UTC", quiet = TRUE)
+}
+
+safe_mean <- function(x) {
+  if (sum(!is.na(x)) == 0) return(NA_real_)
+  mean(x, na.rm = TRUE)
+}
+
+safe_weighted_mean <- function(x, w) {
+  x <- as.numeric(x)
+  w <- as.numeric(w)
+
+  ok <- !is.na(x) & !is.na(w) & w > 0
+
+  if (sum(ok) == 0) {
+    return(NA_real_)
+  }
+
+  weighted.mean(x[ok], w = w[ok], na.rm = TRUE)
+}
+
+safe_sd <- function(x) {
+  if (sum(!is.na(x)) <= 1) return(NA_real_)
+  sd(x, na.rm = TRUE)
+}
+
+safe_sem <- function(x) {
+  n <- sum(!is.na(x))
+  if (n <= 1) return(NA_real_)
+  sd(x, na.rm = TRUE) / sqrt(n)
+}
+
+safe_tcrit <- function(n, confidence = 0.95) {
+  if (is.na(n) || n <= 1) return(NA_real_)
+  alpha <- 1 - confidence
+  qt(1 - alpha / 2, df = n - 1)
+}
+
+to_logical_safe <- function(x) {
+  if (is.logical(x)) return(x)
+
+  x_chr <- tolower(as.character(x))
+
+  case_when(
+    x_chr %in% c("true", "t", "1", "yes") ~ TRUE,
+    x_chr %in% c("false", "f", "0", "no") ~ FALSE,
+    TRUE ~ NA
+  )
+}
+
+fmt_duration <- function(seconds) {
+  ifelse(
+    is.na(seconds),
+    NA_character_,
+    paste0(
+      floor(seconds / 3600), "h ",
+      floor((seconds %% 3600) / 60), "m ",
+      round(seconds %% 60), "s"
+    )
+  )
+}
+
+fmt_number <- function(x, accuracy = 0.01) {
+  scales::number(x, accuracy = accuracy, big.mark = ",")
+}
+
+fmt_pct <- function(x, accuracy = 0.1) {
+  scales::percent(x, accuracy = accuracy)
+}
+
+base_theme <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      legend.position = "bottom",
+      plot.title.position = "plot",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey30"),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(face = "bold")
+    )
+}
+
+write_inference_csv <- function(df, filename) {
+  readr::write_csv(df, file.path(OUT_TABLE_DIR, filename))
+  invisible(df)
+}
+
+save_inference_figure <- function(plot, filename, width = 10, height = 6) {
+  ggsave(
+    file.path(OUT_FIG_DIR, filename),
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = 320,
+    bg = "white"
+  )
+  invisible(plot)
+}
+
+read_jsonl_robust <- function(path, bad_lines_filename = "00_bad_jsonl_lines.csv") {
+  if (!file.exists(path)) {
+    return(tibble())
+  }
+
+  lines <- readLines(path, warn = FALSE, encoding = "UTF-8")
+
+  if (length(lines) == 0) {
+    return(tibble())
+  }
+
+  parsed <- vector("list", length(lines))
+  bad_lines <- list()
+
+  for (i in seq_along(lines)) {
+    line <- lines[[i]]
+
+    if (is.na(line) || trimws(line) == "") {
+      next
+    }
+
+    obj <- tryCatch(
+      jsonlite::fromJSON(line, flatten = TRUE),
+      error = function(e) {
+        bad_lines[[length(bad_lines) + 1]] <<- tibble(
+          line_number = i,
+          error = conditionMessage(e),
+          line_prefix = substr(line, 1, 250)
+        )
+        NULL
+      }
+    )
+
+    if (!is.null(obj)) {
+      parsed[[i]] <- as_tibble_json_safe(obj)
+    }
+  }
+
+  parsed <- parsed[!vapply(parsed, is.null, logical(1))]
+  bad_lines_df <- dplyr::bind_rows(bad_lines)
+
+  if (nrow(bad_lines_df) > 0) {
+    readr::write_csv(
+      bad_lines_df,
+      file.path(OUT_TABLE_DIR, bad_lines_filename)
+    )
+  }
+
+  if (length(parsed) == 0) {
+    return(tibble())
+  }
+
+  dplyr::bind_rows(parsed)
+}
+
+read_split_metadata_file <- function(path) {
+  obj <- jsonlite::fromJSON(path, flatten = TRUE)
+
+  tibble(
+    scenario_id = as.character(get_scalar(obj, "scenario_id", NA_character_)),
+    scenario_label_raw = as.character(get_scalar(obj, "scenario_label", NA_character_)),
+    seed = as.integer(get_scalar(obj, "seed", NA_integer_)),
+    split = as.character(get_scalar(obj, "split", NA_character_)),
+    status = as.character(get_scalar(obj, "status", NA_character_)),
+    run_mode = as.character(get_scalar(obj, "run_mode", NA_character_)),
+    started_at_utc = as.character(get_scalar(obj, "started_at_utc", NA_character_)),
+    finished_at_utc = as.character(get_scalar(obj, "finished_at_utc", NA_character_)),
+    elapsed_seconds = as.numeric(get_scalar(obj, "elapsed_seconds", NA_real_)),
+    rows = as.numeric(get_scalar(obj, "rows", NA_real_)),
+    output_path = as.character(get_scalar(obj, "output_path", NA_character_)),
+    adapter_path = as.character(get_scalar(obj, "adapter_path", NA_character_)),
+    prompt_strategy = as.character(get_scalar(obj, "prompt_strategy", NA_character_)),
+    normalized_null_count = as.numeric(get_scalar(obj, "normalized_null_count", NA_real_)),
+    max_new_tokens = as.numeric(get_nested_scalar(obj, "generation_config", "max_new_tokens", NA_real_)),
+    do_sample = as.character(get_nested_scalar(obj, "generation_config", "do_sample", NA_character_)),
+    num_beams = as.numeric(get_nested_scalar(obj, "generation_config", "num_beams", NA_real_)),
+    metadata_path = as.character(path)
+  )
+}
+
+read_run_metadata_file <- function(path) {
+  obj <- jsonlite::fromJSON(path, flatten = TRUE)
+
+  tibble(
+    scenario_id = as.character(get_scalar(obj, "scenario_id", NA_character_)),
+    scenario_label_raw = as.character(get_scalar(obj, "scenario_label", NA_character_)),
+    seed = as.integer(get_scalar(obj, "seed", NA_integer_)),
+    status = as.character(get_scalar(obj, "status", NA_character_)),
+    run_mode = as.character(get_scalar(obj, "run_mode", NA_character_)),
+    started_at_utc = as.character(get_scalar(obj, "started_at_utc", NA_character_)),
+    finished_at_utc = as.character(get_scalar(obj, "finished_at_utc", NA_character_)),
+    elapsed_seconds = as.numeric(get_scalar(obj, "elapsed_seconds", NA_real_)),
+    adapter_path = as.character(get_scalar(obj, "adapter_path", NA_character_)),
+    prompt_strategy = as.character(get_scalar(obj, "prompt_strategy", NA_character_)),
+    metadata_path = as.character(path)
+  )
+}
+```
+
+# Load inference summary
+
+```{r load-summary}
+inference_summary_json <- jsonlite::fromJSON(SUMMARY_PATH, flatten = TRUE)
+
+generation_config <- inference_summary_json$generation_config %||% list()
+
+experiment_metadata <- tibble(
+  notebook = inference_summary_json$notebook %||% NA_character_,
+  created_at_utc = inference_summary_json$created_at_utc %||% NA_character_,
+  run_mode = inference_summary_json$run_mode %||% NA_character_,
+  base_model_id = inference_summary_json$base_model_id %||% NA_character_,
+  dataset_seed = inference_summary_json$dataset_seed %||% NA_integer_,
+  max_input_length = inference_summary_json$max_input_length %||% NA_integer_,
+  generation_batch_size = inference_summary_json$generation_batch_size %||% NA_integer_,
+  use_4bit = inference_summary_json$use_4bit %||% NA,
+  max_new_tokens = generation_config$max_new_tokens %||% NA_integer_,
+  do_sample = generation_config$do_sample %||% NA,
+  num_beams = generation_config$num_beams %||% NA_integer_,
+  results_dir = inference_summary_json$results_dir %||% NA_character_,
+  events_log_path = inference_summary_json$events_log_path %||% NA_character_,
+  runs_log_dir = inference_summary_json$runs_log_dir %||% NA_character_
+)
+
+result_files <- as_tibble_json_safe(inference_summary_json$result_files) |>
+  add_scenario_info() |>
+  mutate(
+    seed = as.integer(seed),
+    split = as.character(split),
+    rows = as.numeric(rows),
+    exists = to_logical_safe(exists)
+  ) |>
+  sort_scenarios()
+
+write_inference_csv(experiment_metadata, "01_inference_experiment_metadata.csv")
+write_inference_csv(result_files, "02_inference_result_files_from_summary.csv")
+
+experiment_metadata |>
+  knitr::kable(
+    caption = "Table 1 - Inference experiment metadata."
+  )
+
+result_files |>
+  select(scenario_short, seed, split, rows, exists, path) |>
+  knitr::kable(
+    caption = "Table 2 - Result files listed in inference summary."
+  )
+```
+
+# Load split metadata files
+
+```{r load-split-metadata}
+split_metadata_files <- if (dir.exists(RUNS_DIR)) {
+  fs::dir_ls(RUNS_DIR, recurse = TRUE, regexp = "test_.*_metadata\\.json$")
+} else {
+  character()
+}
+
+split_metadata <- purrr::map_dfr(
+  split_metadata_files,
+  read_split_metadata_file
+) |>
+  add_scenario_info() |>
+  mutate(
+    split = as.character(split),
+    split_label = recode(split, !!!split_labels, .default = split),
+    split_label = factor(split_label, levels = split_labels[c("test_clean", "test_attacked_seen", "test_attacked_unseen")]),
+    started_at = parse_time_utc(started_at_utc),
+    finished_at = parse_time_utc(finished_at_utc),
+    elapsed_minutes = elapsed_seconds / 60,
+    seconds_per_example = elapsed_seconds / rows,
+    examples_per_second = rows / elapsed_seconds,
+    generated_token_budget = rows * max_new_tokens,
+    token_budget_per_second = generated_token_budget / elapsed_seconds,
+    normalized_null_rate = normalized_null_count / rows,
+    is_attacked_split = split %in% c("test_attacked_seen", "test_attacked_unseen"),
+    adapter_used = !is.na(adapter_path) & adapter_path != "",
+    prompt_strategy = ifelse(is.na(prompt_strategy) | prompt_strategy == "", "unknown", prompt_strategy)
+  ) |>
+  sort_scenarios()
+
+if (nrow(split_metadata) == 0) {
+  stop("No test_*_metadata.json files were found under: ", RUNS_DIR)
+}
+
+write_inference_csv(split_metadata, "03_inference_split_metadata_enriched.csv")
+
+split_metadata |>
+  select(
+    scenario_short,
+    seed,
+    split,
+    status,
+    rows,
+    elapsed_minutes,
+    seconds_per_example,
+    examples_per_second,
+    normalized_null_count,
+    normalized_null_rate,
+    prompt_strategy,
+    adapter_used
+  ) |>
+  mutate(
+    elapsed_minutes = fmt_number(elapsed_minutes),
+    seconds_per_example = fmt_number(seconds_per_example, accuracy = 0.0001),
+    examples_per_second = fmt_number(examples_per_second, accuracy = 0.001),
+    normalized_null_rate = fmt_pct(normalized_null_rate)
+  ) |>
+  knitr::kable(
+    caption = "Table 3 - Inference split metadata."
+  )
+```
+
+# Load run metadata files
+
+```{r load-run-metadata}
+run_metadata_files <- if (dir.exists(RUNS_DIR)) {
+  fs::dir_ls(RUNS_DIR, recurse = TRUE, regexp = "run_metadata\\.json$")
+} else {
+  character()
+}
+
+run_metadata <- purrr::map_dfr(
+  run_metadata_files,
+  read_run_metadata_file
+) |>
+  add_scenario_info() |>
+  mutate(
+    started_at = parse_time_utc(started_at_utc),
+    finished_at = parse_time_utc(finished_at_utc),
+    elapsed_minutes = elapsed_seconds / 60,
+    adapter_used = !is.na(adapter_path) & adapter_path != "",
+    prompt_strategy = ifelse(is.na(prompt_strategy) | prompt_strategy == "", "unknown", prompt_strategy)
+  ) |>
+  left_join(
+    split_metadata |>
+      group_by(scenario_id, seed) |>
+      summarise(
+        split_elapsed_seconds_sum = sum(elapsed_seconds, na.rm = TRUE),
+        split_rows_sum = sum(rows, na.rm = TRUE),
+        split_count = n(),
+        .groups = "drop"
+      ),
+    by = c("scenario_id", "seed")
+  ) |>
+  mutate(
+    run_overhead_seconds = elapsed_seconds - split_elapsed_seconds_sum,
+    run_overhead_rate = run_overhead_seconds / elapsed_seconds,
+    run_examples_per_second = split_rows_sum / elapsed_seconds,
+    run_seconds_per_example = elapsed_seconds / split_rows_sum
+  ) |>
+  sort_scenarios()
+
+write_inference_csv(run_metadata, "04_inference_run_metadata_enriched.csv")
+
+run_metadata |>
+  select(
+    scenario_short,
+    seed,
+    status,
+    elapsed_minutes,
+    split_elapsed_seconds_sum,
+    run_overhead_seconds,
+    run_overhead_rate,
+    split_rows_sum,
+    run_examples_per_second,
+    run_seconds_per_example,
+    prompt_strategy,
+    adapter_used
+  ) |>
+  mutate(
+    elapsed_minutes = fmt_number(elapsed_minutes),
+    split_elapsed_seconds_sum = fmt_number(split_elapsed_seconds_sum),
+    run_overhead_seconds = fmt_number(run_overhead_seconds),
+    run_overhead_rate = fmt_pct(run_overhead_rate),
+    run_examples_per_second = fmt_number(run_examples_per_second, accuracy = 0.001),
+    run_seconds_per_example = fmt_number(run_seconds_per_example, accuracy = 0.0001)
+  ) |>
+  knitr::kable(
+    caption = "Table 4 - Inference run-level metadata."
+  )
+```
+
+# Split-level inference cost summary
+
+```{r split-summary}
+split_summary_by_scenario <- split_metadata |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    split,
+    split_label,
+    prompt_strategy
+  ) |>
+  summarise(
+    n_runs = n(),
+    n_completed = sum(status == "completed", na.rm = TRUE),
+    seeds = paste(sort(unique(seed)), collapse = ", "),
+    rows_per_run = first(rows),
+    total_rows = sum(rows, na.rm = TRUE),
+    total_elapsed_seconds = sum(elapsed_seconds, na.rm = TRUE),
+    mean_elapsed_seconds = mean(elapsed_seconds, na.rm = TRUE),
+    sd_elapsed_seconds = safe_sd(elapsed_seconds),
+    sem_elapsed_seconds = safe_sem(elapsed_seconds),
+    tcrit_95 = safe_tcrit(n()),
+    ci95_low_elapsed_seconds = mean_elapsed_seconds - tcrit_95 * sem_elapsed_seconds,
+    ci95_high_elapsed_seconds = mean_elapsed_seconds + tcrit_95 * sem_elapsed_seconds,
+    mean_seconds_per_example = mean(seconds_per_example, na.rm = TRUE),
+    sd_seconds_per_example = safe_sd(seconds_per_example),
+    mean_examples_per_second = mean(examples_per_second, na.rm = TRUE),
+    sd_examples_per_second = safe_sd(examples_per_second),
+    mean_token_budget_per_second = mean(token_budget_per_second, na.rm = TRUE),
+    total_normalized_null_count = sum(normalized_null_count, na.rm = TRUE),
+    normalized_null_rate = total_normalized_null_count / total_rows,
+    .groups = "drop"
+  ) |>
+  mutate(
+    mean_elapsed_minutes = mean_elapsed_seconds / 60,
+    total_elapsed_minutes = total_elapsed_seconds / 60,
+    ci95_low_elapsed_minutes = ci95_low_elapsed_seconds / 60,
+    ci95_high_elapsed_minutes = ci95_high_elapsed_seconds / 60,
+    mean_duration_label = fmt_duration(mean_elapsed_seconds),
+    total_duration_label = fmt_duration(total_elapsed_seconds)
+  ) |>
+  sort_scenarios()
+
+write_inference_csv(split_summary_by_scenario, "05_split_summary_by_scenario.csv")
+
+split_summary_by_scenario |>
+  select(
+    scenario_short,
+    split,
+    prompt_strategy,
+    n_runs,
+    seeds,
+    rows_per_run,
+    mean_elapsed_minutes,
+    mean_seconds_per_example,
+    mean_examples_per_second,
+    mean_token_budget_per_second,
+    normalized_null_rate,
+    mean_duration_label
+  ) |>
+  mutate(
+    mean_elapsed_minutes = fmt_number(mean_elapsed_minutes),
+    mean_seconds_per_example = fmt_number(mean_seconds_per_example, accuracy = 0.0001),
+    mean_examples_per_second = fmt_number(mean_examples_per_second, accuracy = 0.001),
+    mean_token_budget_per_second = fmt_number(mean_token_budget_per_second, accuracy = 0.001),
+    normalized_null_rate = fmt_pct(normalized_null_rate)
+  ) |>
+  knitr::kable(
+    caption = "Table 5 - Split-level inference cost by scenario."
+  )
+```
+
+# Scenario-level inference cost summary
+
+```{r scenario-summary}
+scenario_all_splits <- split_metadata |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    seed,
+    prompt_strategy
+  ) |>
+  summarise(
+    split = "all_splits",
+    split_label = "All splits",
+    rows = sum(rows, na.rm = TRUE),
+    elapsed_seconds = sum(elapsed_seconds, na.rm = TRUE),
+    normalized_null_count = sum(normalized_null_count, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    seconds_per_example = elapsed_seconds / rows,
+    examples_per_second = rows / elapsed_seconds,
+    normalized_null_rate = normalized_null_count / rows
+  )
+
+scenario_all_attacks <- split_metadata |>
+  filter(is_attacked_split) |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    seed,
+    prompt_strategy
+  ) |>
+  summarise(
+    split = "all_attacks",
+    split_label = "All attacks",
+    rows = sum(rows, na.rm = TRUE),
+    elapsed_seconds = sum(elapsed_seconds, na.rm = TRUE),
+    normalized_null_count = sum(normalized_null_count, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    seconds_per_example = elapsed_seconds / rows,
+    examples_per_second = rows / elapsed_seconds,
+    normalized_null_rate = normalized_null_count / rows
+  )
+
+aggregate_split_metadata <- bind_rows(
+  split_metadata |>
+    select(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      seed,
+      prompt_strategy,
+      split,
+      split_label,
+      rows,
+      elapsed_seconds,
+      seconds_per_example,
+      examples_per_second,
+      normalized_null_count,
+      normalized_null_rate
+    ),
+  scenario_all_attacks,
+  scenario_all_splits
+) |>
+  mutate(
+    split = factor(as.character(split), levels = split_order),
+    split_label = factor(as.character(split_label), levels = split_labels[split_order])
+  ) |>
+  sort_scenarios()
+
+scenario_inference_summary <- aggregate_split_metadata |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    split,
+    split_label,
+    prompt_strategy
+  ) |>
+  summarise(
+    n_runs = n(),
+    seeds = paste(sort(unique(seed)), collapse = ", "),
+    total_rows = sum(rows, na.rm = TRUE),
+    mean_rows = mean(rows, na.rm = TRUE),
+    total_elapsed_seconds = sum(elapsed_seconds, na.rm = TRUE),
+    mean_elapsed_seconds = mean(elapsed_seconds, na.rm = TRUE),
+    sd_elapsed_seconds = safe_sd(elapsed_seconds),
+    mean_seconds_per_example = mean(seconds_per_example, na.rm = TRUE),
+    sd_seconds_per_example = safe_sd(seconds_per_example),
+    mean_examples_per_second = mean(examples_per_second, na.rm = TRUE),
+    sd_examples_per_second = safe_sd(examples_per_second),
+    total_normalized_null_count = sum(normalized_null_count, na.rm = TRUE),
+    normalized_null_rate = total_normalized_null_count / total_rows,
+    .groups = "drop"
+  ) |>
+  mutate(
+    mean_elapsed_minutes = mean_elapsed_seconds / 60,
+    total_elapsed_minutes = total_elapsed_seconds / 60,
+    total_elapsed_hours = total_elapsed_seconds / 3600,
+    mean_duration_label = fmt_duration(mean_elapsed_seconds),
+    total_duration_label = fmt_duration(total_elapsed_seconds)
+  ) |>
+  sort_scenarios()
+
+write_inference_csv(aggregate_split_metadata, "06_aggregate_split_metadata.csv")
+write_inference_csv(scenario_inference_summary, "07_scenario_inference_summary.csv")
+
+scenario_inference_summary |>
+  filter(split %in% c("all_attacks", "all_splits")) |>
+  select(
+    scenario_short,
+    split_label,
+    prompt_strategy,
+    n_runs,
+    seeds,
+    mean_rows,
+    mean_elapsed_minutes,
+    mean_seconds_per_example,
+    mean_examples_per_second,
+    normalized_null_rate,
+    mean_duration_label
+  ) |>
+  mutate(
+    mean_elapsed_minutes = fmt_number(mean_elapsed_minutes),
+    mean_seconds_per_example = fmt_number(mean_seconds_per_example, accuracy = 0.0001),
+    mean_examples_per_second = fmt_number(mean_examples_per_second, accuracy = 0.001),
+    normalized_null_rate = fmt_pct(normalized_null_rate)
+  ) |>
+  knitr::kable(
+    caption = "Table 6 - Scenario-level inference cost summary."
+  )
+```
+
+# Inference overhead against C0
+
+```{r overhead-vs-c0}
+c0_split_reference <- scenario_inference_summary |>
+  filter(scenario_id == "c0_base") |>
+  select(
+    split,
+    c0_mean_seconds_per_example = mean_seconds_per_example,
+    c0_mean_examples_per_second = mean_examples_per_second,
+    c0_mean_elapsed_seconds = mean_elapsed_seconds
+  )
+
+overhead_vs_c0 <- scenario_inference_summary |>
+  left_join(c0_split_reference, by = "split") |>
+  mutate(
+    seconds_per_example_delta_vs_c0 = mean_seconds_per_example - c0_mean_seconds_per_example,
+    relative_seconds_per_example_vs_c0 = mean_seconds_per_example / c0_mean_seconds_per_example,
+    overhead_rate_vs_c0 = relative_seconds_per_example_vs_c0 - 1,
+    examples_per_second_delta_vs_c0 = mean_examples_per_second - c0_mean_examples_per_second,
+    relative_examples_per_second_vs_c0 = mean_examples_per_second / c0_mean_examples_per_second,
+    elapsed_time_delta_vs_c0 = mean_elapsed_seconds - c0_mean_elapsed_seconds,
+    relative_elapsed_time_vs_c0 = mean_elapsed_seconds / c0_mean_elapsed_seconds
+  ) |>
+  sort_scenarios()
+
+write_inference_csv(overhead_vs_c0, "08_inference_overhead_vs_c0.csv")
+
+overhead_vs_c0 |>
+  filter(split %in% c("test_clean", "test_attacked_seen", "test_attacked_unseen", "all_splits")) |>
+  select(
+    scenario_short,
+    split_label,
+    mean_seconds_per_example,
+    c0_mean_seconds_per_example,
+    seconds_per_example_delta_vs_c0,
+    relative_seconds_per_example_vs_c0,
+    overhead_rate_vs_c0,
+    mean_examples_per_second,
+    relative_examples_per_second_vs_c0
+  ) |>
+  mutate(
+    mean_seconds_per_example = fmt_number(mean_seconds_per_example, accuracy = 0.0001),
+    c0_mean_seconds_per_example = fmt_number(c0_mean_seconds_per_example, accuracy = 0.0001),
+    seconds_per_example_delta_vs_c0 = fmt_number(seconds_per_example_delta_vs_c0, accuracy = 0.0001),
+    relative_seconds_per_example_vs_c0 = fmt_number(relative_seconds_per_example_vs_c0, accuracy = 0.001),
+    overhead_rate_vs_c0 = fmt_pct(overhead_rate_vs_c0),
+    mean_examples_per_second = fmt_number(mean_examples_per_second, accuracy = 0.001),
+    relative_examples_per_second_vs_c0 = fmt_number(relative_examples_per_second_vs_c0, accuracy = 0.001)
+  ) |>
+  knitr::kable(
+    caption = "Table 7 - Inference overhead against C0."
+  )
+```
+
+# Prompt strategy and adapter overhead
+
+```{r prompt-strategy-summary}
+prompt_strategy_summary <- aggregate_split_metadata |>
+  group_by(prompt_strategy, split, split_label) |>
+  summarise(
+    n_runs = n(),
+    scenarios = paste(sort(unique(as.character(scenario_short))), collapse = ", "),
+    total_rows = sum(rows, na.rm = TRUE),
+    total_elapsed_seconds = sum(elapsed_seconds, na.rm = TRUE),
+    mean_seconds_per_example = mean(seconds_per_example, na.rm = TRUE),
+    mean_examples_per_second = mean(examples_per_second, na.rm = TRUE),
+    normalized_null_rate = sum(normalized_null_count, na.rm = TRUE) / total_rows,
+    .groups = "drop"
+  ) |>
+  mutate(
+    total_elapsed_minutes = total_elapsed_seconds / 60
+  )
+
+write_inference_csv(prompt_strategy_summary, "09_prompt_strategy_inference_summary.csv")
+
+prompt_strategy_summary |>
+  filter(split %in% c("test_clean", "all_attacks", "all_splits")) |>
+  select(
+    prompt_strategy,
+    split_label,
+    scenarios,
+    n_runs,
+    total_rows,
+    total_elapsed_minutes,
+    mean_seconds_per_example,
+    mean_examples_per_second,
+    normalized_null_rate
+  ) |>
+  mutate(
+    total_elapsed_minutes = fmt_number(total_elapsed_minutes),
+    mean_seconds_per_example = fmt_number(mean_seconds_per_example, accuracy = 0.0001),
+    mean_examples_per_second = fmt_number(mean_examples_per_second, accuracy = 0.001),
+    normalized_null_rate = fmt_pct(normalized_null_rate)
+  ) |>
+  knitr::kable(
+    caption = "Table 8 - Prompt strategy inference summary."
+  )
+```
+
+# Events and errors
+
+```{r events-and-errors}
+inference_events <- read_jsonl_robust(
+  EVENTS_PATH,
+  bad_lines_filename = "00_bad_inference_event_lines.csv"
+)
+
+if (nrow(inference_events) > 0) {
+  if (!("scenario_id" %in% names(inference_events)) && "scenario" %in% names(inference_events)) {
+    inference_events <- inference_events |>
+      rename(scenario_id = scenario)
+  }
+
+  inference_events <- inference_events |>
+    add_scenario_info() |>
+    mutate(
+      seed = as.integer(seed),
+      event_type = as.character(event_type),
+      run_mode = as.character(run_mode),
+      split = if ("split" %in% names(inference_events)) as.character(split) else NA_character_,
+      timestamp = parse_time_utc(timestamp_utc),
+      rows = if ("rows" %in% names(inference_events)) as.numeric(rows) else NA_real_,
+      elapsed_seconds = if ("elapsed_seconds" %in% names(inference_events)) as.numeric(elapsed_seconds) else NA_real_,
+      normalized_null_count = if ("normalized_null_count" %in% names(inference_events)) as.numeric(normalized_null_count) else NA_real_,
+      examples_per_second = rows / elapsed_seconds,
+      seconds_per_example = elapsed_seconds / rows
+    ) |>
+    sort_scenarios()
+
+  event_counts <- inference_events |>
+    count(run_mode, scenario_id, scenario_short, seed, event_type, name = "n_events") |>
+    sort_scenarios()
+
+  split_completion_events <- inference_events |>
+    filter(event_type == "split_completed") |>
+    mutate(
+      normalized_null_rate = normalized_null_count / rows
+    ) |>
+    select(
+      run_mode,
+      scenario_id,
+      scenario_short,
+      seed,
+      split,
+      rows,
+      elapsed_seconds,
+      examples_per_second,
+      seconds_per_example,
+      normalized_null_count,
+      normalized_null_rate,
+      timestamp
+    ) |>
+    sort_scenarios()
+
+  write_inference_csv(inference_events, "10_inference_events_enriched.csv")
+  write_inference_csv(event_counts, "11_inference_event_counts.csv")
+  write_inference_csv(split_completion_events, "12_split_completion_events.csv")
+
+  event_counts |>
+    knitr::kable(
+      caption = "Table 9 - Inference event counts."
+    )
+} else {
+  cat("No inference events found.")
+}
+
+error_files <- if (dir.exists(RUNS_DIR)) {
+  fs::dir_ls(RUNS_DIR, recurse = TRUE, regexp = "error\\.txt$")
+} else {
+  character()
+}
+
+inference_errors <- purrr::map_dfr(
+  error_files,
+  function(path) {
+    parts <- stringr::str_split(as.character(path), "[/\\\\]", simplify = TRUE)
+    runs_idx <- which(parts == "runs")
+
+    scenario <- if (length(runs_idx) > 0) parts[runs_idx + 1] else NA_character_
+    seed_part <- if (length(runs_idx) > 0) parts[runs_idx + 2] else NA_character_
+    seed <- stringr::str_remove(seed_part, "^seed_")
+
+    error_text <- paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+
+    tibble(
+      scenario_id = scenario,
+      seed = as.integer(seed),
+      error_path = as.character(path),
+      error_text = error_text,
+      error_preview = substr(error_text, 1, 500)
+    )
+  }
+)
+
+if (nrow(inference_errors) > 0) {
+  inference_errors <- inference_errors |>
+    add_scenario_info() |>
+    sort_scenarios()
+
+  write_inference_csv(inference_errors, "13_inference_error_files.csv")
+
+  inference_errors |>
+    select(scenario_short, seed, error_path, error_preview) |>
+    knitr::kable(
+      caption = "Table 10 - Error files found in inference run directories."
+    )
+} else {
+  cat("No error.txt files found in inference run directories.")
+}
+```
+
+# Optional join with quality metrics
+
+```{r join-quality-metrics}
+if (file.exists(DESC_INFERENCE_PATH)) {
+  inference_compact <- readr::read_csv(DESC_INFERENCE_PATH, show_col_types = FALSE) |>
+    add_scenario_info()
+
+  if (!("is_correct_flag" %in% names(inference_compact))) {
+    if (all(c("normalized_output", "expected_answer") %in% names(inference_compact))) {
+      inference_compact$is_correct_flag <- inference_compact$normalized_output == inference_compact$expected_answer
+    } else {
+      inference_compact$is_correct_flag <- NA
+    }
+  }
+
+  if (!("followed_attack_flag" %in% names(inference_compact))) {
+    if (all(c("normalized_output", "attack_target") %in% names(inference_compact))) {
+      inference_compact$followed_attack_flag <- inference_compact$normalized_output == inference_compact$attack_target
+    } else {
+      inference_compact$followed_attack_flag <- NA
+    }
+  }
+
+  if (!("invalid_output_flag" %in% names(inference_compact))) {
+    inference_compact$invalid_output_flag <- NA
+  }
+
+  quality_by_split <- inference_compact |>
+    mutate(
+      seed = as.integer(seed),
+      split = as.character(eval_split),
+      is_correct_flag = to_logical_safe(is_correct_flag),
+      followed_attack_flag = to_logical_safe(followed_attack_flag),
+      invalid_output_flag = to_logical_safe(invalid_output_flag),
+      is_attacked_split = split %in% c("test_attacked_seen", "test_attacked_unseen")
+    ) |>
+    group_by(scenario_id, scenario_short, scenario_label, seed, split) |>
+    summarise(
+      metric_rows = n(),
+      accuracy = mean(as.integer(is_correct_flag), na.rm = TRUE),
+      asv_rate = if_else(
+        first(is_attacked_split),
+        mean(as.integer(followed_attack_flag), na.rm = TRUE),
+        NA_real_
+      ),
+      invalid_output_rate = mean(as.integer(invalid_output_flag), na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    sort_scenarios()
+
+  quality_all_attacks <- quality_by_split |>
+    filter(split %in% c("test_attacked_seen", "test_attacked_unseen")) |>
+    group_by(scenario_id, scenario_short, scenario_label, seed) |>
+    summarise(
+      split = "all_attacks",
+      accuracy = safe_weighted_mean(accuracy, metric_rows),
+      asv_rate = safe_weighted_mean(asv_rate, metric_rows),
+      invalid_output_rate = safe_weighted_mean(invalid_output_rate, metric_rows),
+      metric_rows = sum(metric_rows, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  quality_all_splits <- quality_by_split |>
+    group_by(scenario_id, scenario_short, scenario_label, seed) |>
+    summarise(
+      split = "all_splits",
+      accuracy = safe_weighted_mean(accuracy, metric_rows),
+      asv_rate = safe_weighted_mean(asv_rate, metric_rows),
+      invalid_output_rate = safe_weighted_mean(invalid_output_rate, metric_rows),
+      metric_rows = sum(metric_rows, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  quality_metrics_full <- bind_rows(
+    quality_by_split,
+    quality_all_attacks,
+    quality_all_splits
+  )
+
+  inference_cost_quality <- aggregate_split_metadata |>
+    left_join(
+      quality_metrics_full |>
+        select(
+          scenario_id,
+          seed,
+          split,
+          metric_rows,
+          accuracy,
+          asv_rate,
+          invalid_output_rate
+        ),
+      by = c("scenario_id", "seed", "split")
+    ) |>
+    mutate(
+      correct_examples_per_second = accuracy * examples_per_second,
+      attack_successes_per_second = asv_rate * examples_per_second,
+      robust_accuracy_per_second = if_else(
+        split %in% c("test_attacked_seen", "test_attacked_unseen", "all_attacks"),
+        accuracy / seconds_per_example,
+        NA_real_
+      ),
+      asv_reduction_proxy_per_second = if_else(
+        split %in% c("test_attacked_seen", "test_attacked_unseen", "all_attacks"),
+        (1 - asv_rate) / seconds_per_example,
+        NA_real_
+      )
+    ) |>
+    sort_scenarios()
+
+  write_inference_csv(quality_by_split, "14_quality_metrics_by_split.csv")
+  write_inference_csv(inference_cost_quality, "15_inference_cost_quality_joined.csv")
+
+  inference_cost_quality |>
+    filter(split %in% c("test_clean", "all_attacks")) |>
+    select(
+      scenario_short,
+      seed,
+      split,
+      seconds_per_example,
+      examples_per_second,
+      accuracy,
+      asv_rate,
+      invalid_output_rate,
+      correct_examples_per_second,
+      robust_accuracy_per_second,
+      asv_reduction_proxy_per_second
+    ) |>
+    mutate(
+      seconds_per_example = fmt_number(seconds_per_example, accuracy = 0.0001),
+      examples_per_second = fmt_number(examples_per_second, accuracy = 0.001),
+      accuracy = fmt_pct(accuracy),
+      asv_rate = fmt_pct(asv_rate),
+      invalid_output_rate = fmt_pct(invalid_output_rate),
+      correct_examples_per_second = fmt_number(correct_examples_per_second, accuracy = 0.001),
+      robust_accuracy_per_second = fmt_number(robust_accuracy_per_second, accuracy = 0.001),
+      asv_reduction_proxy_per_second = fmt_number(asv_reduction_proxy_per_second, accuracy = 0.001)
+    ) |>
+    knitr::kable(
+      caption = "Table 11 - Inference cost joined with task and attack metrics."
+    )
+} else {
+  inference_cost_quality <- NULL
+  cat("tables/descriptive/01_inference_compact.csv not found. Quality-cost join skipped.")
+}
+```
+
+# Figures
+
+## Split elapsed time by scenario
+
+```{r fig-split-elapsed, fig.width=11, fig.height=6.5}
+p_split_elapsed <- split_metadata |>
+  ggplot(aes(x = scenario_short, y = elapsed_minutes, color = scenario_short)) +
+  geom_point(aes(shape = factor(seed)), size = 3.1, position = position_jitter(width = 0.08, height = 0)) +
+  stat_summary(
+    fun = mean,
+    geom = "crossbar",
+    width = 0.45,
+    color = "black",
+    linewidth = 0.35
+  ) +
+  facet_wrap(~ split_label, scales = "free_y") +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Inference elapsed time by split",
+    subtitle = "Points are individual seeds; black bars are scenario means.",
+    x = "Scenario",
+    y = "Elapsed time (minutes)",
+    color = "Scenario",
+    shape = "Seed"
+  ) +
+  base_theme()
+
+print(p_split_elapsed)
+
+save_inference_figure(
+  p_split_elapsed,
+  "01_inference_elapsed_time_by_split.png",
+  width = 11,
+  height = 6.5
+)
+```
+
+## Seconds per example by split
+
+```{r fig-seconds-per-example, fig.width=11, fig.height=6.5}
+p_seconds_per_example <- split_metadata |>
+  ggplot(aes(x = scenario_short, y = seconds_per_example, color = scenario_short)) +
+  geom_point(aes(shape = factor(seed)), size = 3.1, position = position_jitter(width = 0.08, height = 0)) +
+  stat_summary(
+    fun = mean,
+    geom = "crossbar",
+    width = 0.45,
+    color = "black",
+    linewidth = 0.35
+  ) +
+  facet_wrap(~ split_label, scales = "free_y") +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Inference seconds per example",
+    subtitle = "Lower values mean cheaper inference per example.",
+    x = "Scenario",
+    y = "Seconds per example",
+    color = "Scenario",
+    shape = "Seed"
+  ) +
+  base_theme()
+
+print(p_seconds_per_example)
+
+save_inference_figure(
+  p_seconds_per_example,
+  "02_inference_seconds_per_example_by_split.png",
+  width = 11,
+  height = 6.5
+)
+```
+
+## Examples per second by split
+
+```{r fig-examples-per-second, fig.width=11, fig.height=6.5}
+p_examples_per_second <- split_metadata |>
+  ggplot(aes(x = scenario_short, y = examples_per_second, color = scenario_short)) +
+  geom_point(aes(shape = factor(seed)), size = 3.1, position = position_jitter(width = 0.08, height = 0)) +
+  stat_summary(
+    fun = mean,
+    geom = "crossbar",
+    width = 0.45,
+    color = "black",
+    linewidth = 0.35
+  ) +
+  facet_wrap(~ split_label, scales = "free_y") +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Inference throughput by split",
+    subtitle = "Higher values mean more examples processed per second.",
+    x = "Scenario",
+    y = "Examples per second",
+    color = "Scenario",
+    shape = "Seed"
+  ) +
+  base_theme()
+
+print(p_examples_per_second)
+
+save_inference_figure(
+  p_examples_per_second,
+  "03_inference_examples_per_second_by_split.png",
+  width = 11,
+  height = 6.5
+)
+```
+
+## Relative overhead vs C0
+
+```{r fig-relative-overhead, fig.width=11, fig.height=6.5}
+p_relative_overhead <- overhead_vs_c0 |>
+  filter(split %in% c("test_clean", "test_attacked_seen", "test_attacked_unseen", "all_splits")) |>
+  ggplot(aes(x = scenario_short, y = relative_seconds_per_example_vs_c0, fill = scenario_short)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey45") +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  facet_wrap(~ split_label, scales = "free_y") +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Relative inference cost vs C0",
+    subtitle = "Values above 1.0x mean higher seconds per example than C0.",
+    x = "Scenario",
+    y = "Relative seconds per example vs C0"
+  ) +
+  base_theme()
+
+print(p_relative_overhead)
+
+save_inference_figure(
+  p_relative_overhead,
+  "04_relative_inference_cost_vs_c0.png",
+  width = 11,
+  height = 6.5
+)
+```
+
+## Run-level total inference time
+
+```{r fig-run-total, fig.width=10.5, fig.height=6}
+p_run_total <- run_metadata |>
+  ggplot(aes(x = scenario_short, y = elapsed_minutes, color = scenario_short)) +
+  geom_point(aes(shape = factor(seed)), size = 3.4, position = position_jitter(width = 0.08, height = 0)) +
+  stat_summary(
+    fun = mean,
+    geom = "crossbar",
+    width = 0.45,
+    color = "black",
+    linewidth = 0.35
+  ) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Run-level total inference time",
+    subtitle = "Includes the complete scenario-seed inference run.",
+    x = "Scenario",
+    y = "Elapsed time (minutes)",
+    color = "Scenario",
+    shape = "Seed"
+  ) +
+  base_theme()
+
+print(p_run_total)
+
+save_inference_figure(
+  p_run_total,
+  "05_run_level_total_inference_time.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Run overhead
+
+```{r fig-run-overhead, fig.width=10.5, fig.height=6}
+p_run_overhead <- run_metadata |>
+  ggplot(aes(x = scenario_short, y = run_overhead_rate, color = scenario_short)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey45") +
+  geom_point(aes(shape = factor(seed)), size = 3.4, position = position_jitter(width = 0.08, height = 0)) +
+  stat_summary(
+    fun = mean,
+    geom = "crossbar",
+    width = 0.45,
+    color = "black",
+    linewidth = 0.35
+  ) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Run-level overhead",
+    subtitle = "Overhead = run elapsed time minus sum of split elapsed times.",
+    x = "Scenario",
+    y = "Overhead rate",
+    color = "Scenario",
+    shape = "Seed"
+  ) +
+  base_theme()
+
+print(p_run_overhead)
+
+save_inference_figure(
+  p_run_overhead,
+  "06_run_level_inference_overhead.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Normalized null rate
+
+```{r fig-null-rate, fig.width=11, fig.height=6.5}
+p_null_rate <- split_summary_by_scenario |>
+  ggplot(aes(x = scenario_short, y = normalized_null_rate, fill = scenario_short)) +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  facet_wrap(~ split_label, scales = "free_y") +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+  labs(
+    title = "Normalized null rate by inference split",
+    subtitle = "Higher values indicate more null normalized outputs during inference.",
+    x = "Scenario",
+    y = "Normalized null rate"
+  ) +
+  base_theme()
+
+print(p_null_rate)
+
+save_inference_figure(
+  p_null_rate,
+  "07_normalized_null_rate_by_split.png",
+  width = 11,
+  height = 6.5
+)
+```
+
+## Inference timeline
+
+```{r fig-inference-timeline, fig.width=11, fig.height=6}
+timeline_data <- run_metadata |>
+  mutate(
+    run_label = paste0(scenario_short, " seed ", seed),
+    run_label = fct_reorder(run_label, as.numeric(started_at))
+  )
+
+p_timeline <- timeline_data |>
+  ggplot(aes(y = run_label, color = scenario_short)) +
+  geom_segment(
+    aes(x = started_at, xend = finished_at, yend = run_label),
+    linewidth = 4,
+    lineend = "round"
+  ) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Inference run timeline",
+    subtitle = "Wall-clock interval from started_at_utc to finished_at_utc.",
+    x = "Time (UTC)",
+    y = "Run",
+    color = "Scenario"
+  ) +
+  base_theme()
+
+print(p_timeline)
+
+save_inference_figure(
+  p_timeline,
+  "08_inference_run_timeline.png",
+  width = 11,
+  height = 6
+)
+```
+
+## Split timeline
+
+```{r fig-split-timeline, fig.width=11, fig.height=7}
+split_timeline_data <- split_metadata |>
+  mutate(
+    run_label = paste0(scenario_short, " seed ", seed),
+    run_label = fct_reorder(run_label, as.numeric(started_at))
+  )
+
+p_split_timeline <- split_timeline_data |>
+  ggplot(aes(y = run_label, color = split_label)) +
+  geom_segment(
+    aes(x = started_at, xend = finished_at, yend = run_label),
+    linewidth = 4,
+    lineend = "round"
+  ) +
+  labs(
+    title = "Inference split timeline",
+    subtitle = "Shows clean, attacked-seen, and attacked-unseen split durations.",
+    x = "Time (UTC)",
+    y = "Run",
+    color = "Split"
+  ) +
+  base_theme()
+
+print(p_split_timeline)
+
+save_inference_figure(
+  p_split_timeline,
+  "09_inference_split_timeline.png",
+  width = 11,
+  height = 7
+)
+```
+
+## Cost-quality figures
+
+```{r fig-cost-quality, fig.width=10.5, fig.height=6.5}
+if (!is.null(inference_cost_quality)) {
+  cost_quality_all_attacks <- inference_cost_quality |>
+    filter(split == "all_attacks")
+
+  p_cost_quality <- cost_quality_all_attacks |>
+    ggplot(aes(x = seconds_per_example, y = accuracy, color = scenario_short)) +
+    geom_point(aes(shape = factor(seed)), size = 3.4) +
+    scale_color_manual(values = scenario_palette, drop = FALSE) +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    labs(
+      title = "Inference cost vs robust accuracy",
+      subtitle = "Ideal region is upper-left: high robust accuracy and low seconds per example.",
+      x = "Seconds per example",
+      y = "Robust accuracy",
+      color = "Scenario",
+      shape = "Seed"
+    ) +
+    base_theme()
+
+  print(p_cost_quality)
+
+  save_inference_figure(
+    p_cost_quality,
+    "10_inference_cost_vs_robust_accuracy.png",
+    width = 10.5,
+    height = 6.5
+  )
+
+  p_cost_asv <- cost_quality_all_attacks |>
+    ggplot(aes(x = seconds_per_example, y = asv_rate, color = scenario_short)) +
+    geom_point(aes(shape = factor(seed)), size = 3.4) +
+    scale_color_manual(values = scenario_palette, drop = FALSE) +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    labs(
+      title = "Inference cost vs ASV",
+      subtitle = "Ideal region is lower-left: low attack success and low seconds per example.",
+      x = "Seconds per example",
+      y = "ASV",
+      color = "Scenario",
+      shape = "Seed"
+    ) +
+    base_theme()
+
+  print(p_cost_asv)
+
+  save_inference_figure(
+    p_cost_asv,
+    "11_inference_cost_vs_asv.png",
+    width = 10.5,
+    height = 6.5
+  )
+}
+```
+
+# Paper-ready inference cost table
+
+```{r paper-ready-table}
+paper_inference_cost_table <- scenario_inference_summary |>
+  filter(split %in% c("test_clean", "all_attacks", "all_splits")) |>
+  select(
+    scenario_short,
+    split_label,
+    prompt_strategy,
+    n_runs,
+    seeds,
+    mean_rows,
+    mean_elapsed_minutes,
+    mean_seconds_per_example,
+    mean_examples_per_second,
+    normalized_null_rate,
+    total_elapsed_hours,
+    total_duration_label
+  ) |>
+  mutate(
+    mean_rows = fmt_number(mean_rows, accuracy = 1),
+    mean_elapsed_minutes = fmt_number(mean_elapsed_minutes),
+    mean_seconds_per_example = fmt_number(mean_seconds_per_example, accuracy = 0.0001),
+    mean_examples_per_second = fmt_number(mean_examples_per_second, accuracy = 0.001),
+    normalized_null_rate = fmt_pct(normalized_null_rate),
+    total_elapsed_hours = fmt_number(total_elapsed_hours)
+  )
+
+write_inference_csv(paper_inference_cost_table, "16_paper_ready_inference_cost_table.csv")
+
+paper_inference_cost_table |>
+  knitr::kable(
+    caption = "Table 12 - Paper-ready inference cost table."
+  )
+```
+
+# Methodological notes
+
+```{r methodological-notes, results='asis'}
+cat("
+## How to interpret this report
+
+Elapsed time is the wall-clock time reported by the inference metadata. Seconds per example is the main normalized inference-cost metric because the splits have different numbers of rows.
+
+Examples per second is the reciprocal throughput view. Higher examples per second means faster inference.
+
+Relative overhead vs C0 compares mean seconds per example for each scenario and split against the C0 base-model reference. Values above 1.0x indicate more expensive inference than C0.
+
+C1 is useful for estimating the cost of the StruQ formatting strategy without adapter training. C2, C3, and C4 include trained adapter-based scenarios.
+
+The quality-cost section is optional. It appears only when tables/descriptive/01_inference_compact.csv is available.
+")
+```
+
+# Generated files
+
+Tables are saved in:
+
+```text
+tables/inference_time_analysis/
+```
+
+Figures are saved in:
+
+```text
+figures/inference_time_analysis/
+```
+
+Main files:
+
+```text
+01_inference_experiment_metadata.csv
+02_inference_result_files_from_summary.csv
+03_inference_split_metadata_enriched.csv
+04_inference_run_metadata_enriched.csv
+05_split_summary_by_scenario.csv
+06_aggregate_split_metadata.csv
+07_scenario_inference_summary.csv
+08_inference_overhead_vs_c0.csv
+09_prompt_strategy_inference_summary.csv
+10_inference_events_enriched.csv
+11_inference_event_counts.csv
+12_split_completion_events.csv
+13_inference_error_files.csv
+14_quality_metrics_by_split.csv
+15_inference_cost_quality_joined.csv
+16_paper_ready_inference_cost_table.csv
+
+01_inference_elapsed_time_by_split.png
+02_inference_seconds_per_example_by_split.png
+03_inference_examples_per_second_by_split.png
+04_relative_inference_cost_vs_c0.png
+05_run_level_total_inference_time.png
+06_run_level_inference_overhead.png
+07_normalized_null_rate_by_split.png
+08_inference_run_timeline.png
+09_inference_split_timeline.png
+10_inference_cost_vs_robust_accuracy.png
+11_inference_cost_vs_asv.png
+```

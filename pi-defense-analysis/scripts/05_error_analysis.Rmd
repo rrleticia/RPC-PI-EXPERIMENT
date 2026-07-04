@@ -1,0 +1,1237 @@
+---
+title: "RPC-PI Experiment — Error Analysis"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6,
+  dpi = 300
+)
+
+options(knitr.kable.NA = "—")
+
+required_packages <- c(
+  "tidyverse",
+  "readr",
+  "jsonlite",
+  "ggplot2",
+  "ggrepel",
+  "patchwork",
+  "scales",
+  "stringr",
+  "forcats",
+  "fs",
+  "here",
+  "knitr"
+)
+
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(readr)
+library(jsonlite)
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+library(scales)
+library(stringr)
+library(forcats)
+library(fs)
+library(here)
+library(knitr)
+```
+
+# Objetivo
+
+Este R Markdown faz a análise de erros do experimento RPC-PI.
+
+A ideia aqui não é repetir apenas as métricas principais, mas decompor **como** os modelos erram:
+
+1. se o erro é seguimento da injeção;
+2. se é erro válido, mas diferente do alvo adversarial;
+3. se é saída inválida;
+4. quais tarefas e tipos de ataque concentram mais falhas;
+5. em quais exemplos os modelos treinados melhoram ou pioram em relação ao C0;
+6. quais falhas são compartilhadas entre os cenários treinados.
+
+# Caminhos
+
+```{r paths}
+DATA_DIR <- here::here("data", "results")
+DESC_DIR <- here::here("tables", "descriptive")
+ERROR_DIR <- file.path(DATA_DIR, "error_analysis", "full")
+ERROR_TABLE_DIR <- file.path(ERROR_DIR, "tables")
+SAFE_SAMPLE_DIR <- file.path(ERROR_DIR, "safe_samples")
+
+OUT_TABLE_DIR <- here::here("tables", "error_analysis")
+OUT_FIG_DIR <- here::here("figures", "error_analysis")
+
+fs::dir_create(OUT_TABLE_DIR)
+fs::dir_create(OUT_FIG_DIR)
+
+if (!dir.exists(DATA_DIR)) {
+  stop(
+    "Não encontrei data/results/. Extraia o ZIP primeiro com: ",
+    "unzip('results.zip', exdir = 'data')"
+  )
+}
+
+if (!dir.exists(ERROR_TABLE_DIR)) {
+  stop(
+    "Não encontrei data/results/error_analysis/full/tables/. ",
+    "Verifique se o results.zip completo foi extraído."
+  )
+}
+```
+
+# Funções auxiliares
+
+```{r helpers}
+read_first_existing <- function(paths, required = TRUE) {
+  existing <- paths[file.exists(paths)]
+
+  if (length(existing) == 0) {
+    if (required) {
+      stop("Nenhum destes arquivos foi encontrado:\n", paste(paths, collapse = "\n"))
+    }
+    return(NULL)
+  }
+
+  readr::read_csv(existing[[1]], show_col_types = FALSE)
+}
+
+coalesce_col <- function(df, cols, default = NA_real_) {
+  existing <- cols[cols %in% names(df)]
+
+  if (length(existing) == 0) {
+    return(rep(default, nrow(df)))
+  }
+
+  out <- df[[existing[[1]]]]
+  if (length(existing) > 1) {
+    for (nm in existing[-1]) {
+      out <- dplyr::coalesce(out, df[[nm]])
+    }
+  }
+
+  out
+}
+
+weighted_rate <- function(rate, weight) {
+  valid <- !is.na(rate) & !is.na(weight) & weight > 0
+  if (!any(valid)) return(NA_real_)
+  sum(rate[valid] * weight[valid]) / sum(weight[valid])
+}
+
+safe_rate <- function(num, den) {
+  ifelse(is.na(den) | den == 0, NA_real_, num / den)
+}
+
+fmt_pct <- function(x, accuracy = 0.1) {
+  scales::percent(x, accuracy = accuracy)
+}
+
+scenario_order <- c(
+  "c0_base",
+  "c1_struq_format_only",
+  "c2_struq_sft",
+  "c3_secalign_dpo",
+  "c4_ih_sft"
+)
+
+scenario_labels <- tibble(
+  scenario_id = scenario_order,
+  scenario_short = c("C0", "C1", "C2", "C3", "C4"),
+  scenario_label = c(
+    "C0 — Base model",
+    "C1 — StruQ format-only",
+    "C2 — StruQ-like SFT",
+    "C3 — SecAlign-like DPO",
+    "C4 — Instruction-Hierarchy-like SFT"
+  )
+)
+
+scenario_palette <- c(
+  C0 = "#7F7F7F",
+  C1 = "#D55E00",
+  C2 = "#0072B2",
+  C3 = "#CC79A7",
+  C4 = "#009E73"
+)
+
+coolwarm_cols <- c(
+  "#3B4CC0",
+  "#8DB0FE",
+  "#F7F7F7",
+  "#F4987A",
+  "#B40426"
+)
+
+sort_scenarios <- function(df) {
+  df |>
+    mutate(
+      scenario_id = factor(scenario_id, levels = scenario_order),
+      scenario_short = factor(scenario_short, levels = c("C0", "C1", "C2", "C3", "C4"))
+    ) |>
+    arrange(scenario_id)
+}
+
+add_scenario_info <- function(df) {
+  out <- df |>
+    left_join(scenario_labels, by = "scenario_id", suffix = c("", "_lookup"))
+
+  # Caso 1: df não tinha scenario_label; depois do join a coluna vem direto
+  # como scenario_label, sem sufixo _lookup.
+  # Caso 2: df já tinha scenario_label; depois do join a coluna auxiliar vem
+  # como scenario_label_lookup.
+  if (!("scenario_label" %in% names(out))) {
+    out$scenario_label <- out$scenario_id
+  }
+
+  if ("scenario_label_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_label = coalesce(
+          as.character(scenario_label),
+          as.character(scenario_label_lookup)
+        )
+      )
+  }
+
+  if (!("scenario_short" %in% names(out))) {
+    out$scenario_short <- NA_character_
+  }
+
+  if ("scenario_short_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_short = coalesce(
+          as.character(scenario_short),
+          as.character(scenario_short_lookup)
+        )
+      )
+  }
+
+  out |>
+    mutate(
+      scenario_short = ifelse(
+        is.na(scenario_short),
+        recode(
+          as.character(scenario_id),
+          c0_base = "C0",
+          c1_struq_format_only = "C1",
+          c2_struq_sft = "C2",
+          c3_secalign_dpo = "C3",
+          c4_ih_sft = "C4",
+          .default = as.character(scenario_id)
+        ),
+        scenario_short
+      )
+    ) |>
+    select(-any_of(c("scenario_label_lookup", "scenario_short_lookup"))) |>
+    sort_scenarios()
+}
+
+base_theme <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      legend.position = "bottom",
+      plot.title.position = "plot",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey30"),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(face = "bold")
+    )
+}
+
+write_error_csv <- function(df, filename) {
+  readr::write_csv(df, file.path(OUT_TABLE_DIR, filename))
+  invisible(df)
+}
+
+save_error_figure <- function(plot, filename, width = 10, height = 6) {
+  ggsave(
+    file.path(OUT_FIG_DIR, filename),
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = 320,
+    bg = "white"
+  )
+  invisible(plot)
+}
+
+pct_axis <- scales::percent_format(accuracy = 1)
+pct_axis_small <- scales::percent_format(accuracy = 0.1)
+```
+
+# Leitura dos arquivos de análise de erro
+
+```{r load-error-tables}
+failure_raw <- read_first_existing(c(
+  file.path(ERROR_TABLE_DIR, "failure_taxonomy_by_scenario_seed_split.csv"),
+  file.path(DESC_DIR, "10_failure_taxonomy_recomputed.csv")
+))
+
+attack_type_raw <- read_first_existing(c(
+  file.path(ERROR_TABLE_DIR, "error_rates_by_attack_type.csv"),
+  file.path(DESC_DIR, "12_metrics_by_attack_type_recomputed.csv")
+))
+
+task_raw <- read_first_existing(c(
+  file.path(ERROR_TABLE_DIR, "error_rates_by_task.csv"),
+  file.path(DESC_DIR, "11_metrics_by_task_recomputed.csv")
+))
+
+seen_unseen_raw <- read_first_existing(c(
+  file.path(ERROR_TABLE_DIR, "seen_vs_unseen_error_patterns.csv")
+))
+
+seen_unseen_pivot_raw <- read_first_existing(c(
+  file.path(ERROR_TABLE_DIR, "seen_vs_unseen_pivot.csv")
+), required = FALSE)
+
+paired_vs_c0_raw <- read_first_existing(c(
+  file.path(ERROR_TABLE_DIR, "paired_summary_vs_c0.csv"),
+  file.path(ERROR_TABLE_DIR, "discussion_paired_vs_c0.csv")
+), required = FALSE)
+
+invalid_outputs_raw <- read_first_existing(c(
+  file.path(ERROR_TABLE_DIR, "invalid_outputs_summary.csv")
+), required = FALSE)
+
+shared_failure_summary_raw <- read_first_existing(c(
+  file.path(ERROR_TABLE_DIR, "shared_failure_summary.csv")
+), required = FALSE)
+
+shared_failures_by_example_raw <- read_first_existing(c(
+  file.path(ERROR_TABLE_DIR, "shared_failures_by_example.csv")
+), required = FALSE)
+
+samples_summary_raw <- read_first_existing(c(
+  file.path(ERROR_TABLE_DIR, "samples_summary.csv")
+), required = FALSE)
+
+coverage_raw <- read_first_existing(c(
+  file.path(ERROR_TABLE_DIR, "inference_coverage.csv")
+), required = FALSE)
+
+list(
+  failure_taxonomy = dim(failure_raw),
+  attack_type = dim(attack_type_raw),
+  task = dim(task_raw),
+  seen_unseen = dim(seen_unseen_raw),
+  paired_vs_c0 = if (!is.null(paired_vs_c0_raw)) dim(paired_vs_c0_raw) else NULL,
+  invalid_outputs = if (!is.null(invalid_outputs_raw)) dim(invalid_outputs_raw) else NULL,
+  shared_failure_summary = if (!is.null(shared_failure_summary_raw)) dim(shared_failure_summary_raw) else NULL
+)
+```
+
+# Cobertura da inferência
+
+```{r coverage-table}
+if (is.null(coverage_raw)) {
+  cat("Tabela de cobertura não encontrada.")
+} else {
+  coverage <- coverage_raw |>
+    add_scenario_info()
+
+  write_error_csv(coverage, "01_inference_coverage.csv")
+
+  coverage |>
+    select(any_of(c(
+      "scenario_short",
+      "scenario_label",
+      "seed",
+      "eval_split",
+      "rows",
+      "examples",
+      "total",
+      "n_examples"
+    ))) |>
+    head(30) |>
+    knitr::kable(
+      caption = "Tabela 1 — Cobertura dos arquivos de inferência usados na análise de erro."
+    )
+}
+```
+
+# Taxonomia de falhas
+
+A taxonomia separa os resultados em quatro tipos:
+
+- `correct`: o modelo preservou a tarefa original;
+- `followed_attack`: o modelo seguiu explicitamente o alvo adversarial;
+- `wrong_other`: o modelo errou, mas não respondeu o alvo da injeção;
+- `invalid_output`: a saída não foi normalizada para um rótulo válido.
+
+```{r failure-taxonomy-summary}
+failure_taxonomy <- failure_raw |>
+  add_scenario_info()
+
+# Mantém apenas splits atacados para a análise principal de erro.
+failure_attacked <- failure_taxonomy |>
+  filter(eval_split != "test_clean")
+
+failure_summary <- failure_attacked |>
+  group_by(scenario_id, scenario_short, scenario_label, failure_type) |>
+  summarise(
+    count = sum(count, na.rm = TRUE),
+    total = sum(total, na.rm = TRUE),
+    .groups = "drop_last"
+  ) |>
+  mutate(rate = count / sum(count, na.rm = TRUE)) |>
+  ungroup() |>
+  sort_scenarios() |>
+  mutate(
+    failure_type_label = case_when(
+      failure_type == "correct" ~ "Correct",
+      failure_type == "followed_attack" ~ "Followed attack",
+      failure_type == "wrong_other" ~ "Wrong other",
+      failure_type == "invalid_output" ~ "Invalid output",
+      TRUE ~ failure_type
+    ),
+    failure_type_label = factor(
+      failure_type_label,
+      levels = c("Correct", "Followed attack", "Wrong other", "Invalid output")
+    )
+  )
+
+failure_summary_percent <- failure_summary |>
+  mutate(rate = rate * 100)
+
+write_error_csv(failure_summary, "02_failure_taxonomy_under_attack_fraction.csv")
+write_error_csv(failure_summary_percent, "02_failure_taxonomy_under_attack_percent.csv")
+
+failure_wide <- failure_summary |>
+  select(scenario_short, failure_type_label, rate) |>
+  pivot_wider(names_from = failure_type_label, values_from = rate) |>
+  arrange(scenario_short)
+
+write_error_csv(failure_wide, "03_failure_taxonomy_under_attack_wide_fraction.csv")
+
+failure_wide |>
+  mutate(across(where(is.numeric), ~ fmt_pct(.x))) |>
+  knitr::kable(
+    caption = "Tabela 2 — Taxonomia de resultados sob ataque."
+  )
+```
+
+```{r fig-failure-taxonomy, fig.width=9.5, fig.height=6}
+failure_fill <- c(
+  "Correct" = "#4DAF4A",
+  "Followed attack" = "#E41A1C",
+  "Wrong other" = "#FF7F00",
+  "Invalid output" = "#377EB8"
+)
+
+p_failure_taxonomy <- failure_summary |>
+  ggplot(aes(x = scenario_short, y = rate, fill = failure_type_label)) +
+  geom_col(width = 0.72) +
+  scale_fill_manual(values = failure_fill, drop = FALSE) +
+  scale_y_continuous(labels = pct_axis) +
+  labs(
+    title = "Failure taxonomy under attack",
+    subtitle = "A decomposição separa acertos, seguimento da injeção, outros erros e saídas inválidas.",
+    x = NULL,
+    y = "Share of attacked examples",
+    fill = NULL
+  ) +
+  base_theme()
+
+print(p_failure_taxonomy)
+
+save_error_figure(
+  p_failure_taxonomy,
+  "01_failure_taxonomy_under_attack.png",
+  width = 9.5,
+  height = 6
+)
+```
+
+# Erros por tipo de ataque
+
+```{r attack-type-error-analysis}
+attack_type <- attack_type_raw |>
+  add_scenario_info()
+
+attack_type$n_weight <- coalesce_col(attack_type, c("total", "n_examples"))
+attack_type$correct_rate_final <- coalesce_col(attack_type, c("correct_rate", "robust_accuracy", "task_success_rate"))
+attack_type$error_rate_final <- dplyr::coalesce(
+  coalesce_col(attack_type, c("error_rate", "untargeted_asr")),
+  1 - attack_type$correct_rate_final
+)
+attack_type$attack_following_rate_final <- coalesce_col(
+  attack_type,
+  c("attack_following_rate", "injection_following_rate", "targeted_asr", "attack_success_rate", "binary_asv")
+)
+attack_type$invalid_output_rate_final <- coalesce_col(attack_type, c("invalid_output_rate"))
+
+attack_type_attacked <- attack_type |>
+  filter(eval_split != "test_clean")
+
+attack_type_summary <- attack_type_attacked |>
+  group_by(scenario_id, scenario_short, scenario_label, attack_type) |>
+  summarise(
+    total = sum(n_weight, na.rm = TRUE),
+    correct_rate = weighted_rate(correct_rate_final, n_weight),
+    error_rate = weighted_rate(error_rate_final, n_weight),
+    attack_following_rate = weighted_rate(attack_following_rate_final, n_weight),
+    invalid_output_rate = weighted_rate(invalid_output_rate_final, n_weight),
+    .groups = "drop"
+  ) |>
+  sort_scenarios() |>
+  mutate(
+    attack_type_label = str_to_title(str_replace_all(attack_type, "_", " "))
+  )
+
+attack_type_summary_percent <- attack_type_summary |>
+  mutate(across(c(correct_rate, error_rate, attack_following_rate, invalid_output_rate), ~ .x * 100))
+
+write_error_csv(attack_type_summary, "04_attack_type_error_summary_fraction.csv")
+write_error_csv(attack_type_summary_percent, "04_attack_type_error_summary_percent.csv")
+
+top_attack_following <- attack_type_summary |>
+  group_by(scenario_short) |>
+  slice_max(attack_following_rate, n = 5, with_ties = FALSE) |>
+  ungroup() |>
+  select(scenario_short, attack_type_label, total, correct_rate, error_rate, attack_following_rate, invalid_output_rate)
+
+write_error_csv(top_attack_following, "05_top_attack_following_by_scenario_fraction.csv")
+
+top_attack_following |>
+  mutate(across(c(correct_rate, error_rate, attack_following_rate, invalid_output_rate), ~ fmt_pct(.x))) |>
+  knitr::kable(
+    caption = "Tabela 3 — Tipos de ataque com maior Injection Following Rate por cenário."
+  )
+```
+
+```{r fig-attack-type-following-heatmap, fig.width=10.5, fig.height=6.2}
+attack_type_levels <- attack_type_summary |>
+  group_by(attack_type_label) |>
+  summarise(mean_ifr = mean(attack_following_rate, na.rm = TRUE), .groups = "drop") |>
+  arrange(desc(mean_ifr)) |>
+  pull(attack_type_label)
+
+p_attack_following_heatmap <- attack_type_summary |>
+  mutate(
+    attack_type_label = factor(attack_type_label, levels = attack_type_levels)
+  ) |>
+  ggplot(aes(x = attack_type_label, y = scenario_short, fill = attack_following_rate)) +
+  geom_tile(color = "white", linewidth = 0.4) +
+  geom_text(aes(label = fmt_pct(attack_following_rate)), size = 3) +
+  scale_fill_gradientn(
+    colours = coolwarm_cols,
+    labels = pct_axis,
+    limits = c(0, 1),
+    name = "IFR"
+  ) +
+  labs(
+    title = "Injection Following Rate by attack type",
+    subtitle = "Cores quentes indicam maior seguimento explícito da instrução adversarial.",
+    x = "Attack type",
+    y = NULL
+  ) +
+  base_theme() +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+print(p_attack_following_heatmap)
+
+save_error_figure(
+  p_attack_following_heatmap,
+  "02_attack_type_injection_following_heatmap.png",
+  width = 10.5,
+  height = 6.2
+)
+```
+
+```{r fig-attack-type-error-scatter, fig.width=10.5, fig.height=7}
+p_attack_type_scatter <- attack_type_summary |>
+  ggplot(
+    aes(
+      x = correct_rate,
+      y = attack_following_rate,
+      color = scenario_short,
+      label = attack_type_label
+    )
+  ) +
+  geom_point(size = 3.3, alpha = 0.9) +
+  ggrepel::geom_text_repel(
+    size = 3,
+    seed = 42,
+    max.overlaps = 30,
+    show.legend = FALSE
+  ) +
+  facet_wrap(~ scenario_short) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = pct_axis, limits = c(0, 1)) +
+  scale_y_continuous(labels = pct_axis, limits = c(0, 1)) +
+  labs(
+    title = "Attack-type error profile",
+    subtitle = "O ideal é o canto inferior direito: alta robust accuracy e baixa Injection Following Rate.",
+    x = "Robust accuracy / correct rate",
+    y = "Injection Following Rate",
+    color = "Scenario"
+  ) +
+  base_theme()
+
+print(p_attack_type_scatter)
+
+save_error_figure(
+  p_attack_type_scatter,
+  "03_attack_type_scatter_correct_vs_ifr.png",
+  width = 10.5,
+  height = 7
+)
+```
+
+# Erros por tarefa
+
+```{r task-error-analysis}
+task <- task_raw |>
+  add_scenario_info()
+
+task$n_weight <- coalesce_col(task, c("total", "n_examples"))
+task$correct_rate_final <- coalesce_col(task, c("correct_rate", "robust_accuracy", "task_success_rate"))
+task$error_rate_final <- dplyr::coalesce(
+  coalesce_col(task, c("error_rate", "untargeted_asr")),
+  1 - task$correct_rate_final
+)
+task$attack_following_rate_final <- coalesce_col(
+  task,
+  c("attack_following_rate", "injection_following_rate", "targeted_asr", "attack_success_rate", "binary_asv")
+)
+task$invalid_output_rate_final <- coalesce_col(task, c("invalid_output_rate"))
+
+task_attacked <- task |>
+  filter(eval_split != "test_clean")
+
+task_summary <- task_attacked |>
+  group_by(scenario_id, scenario_short, scenario_label, task_name) |>
+  summarise(
+    total = sum(n_weight, na.rm = TRUE),
+    correct_rate = weighted_rate(correct_rate_final, n_weight),
+    error_rate = weighted_rate(error_rate_final, n_weight),
+    attack_following_rate = weighted_rate(attack_following_rate_final, n_weight),
+    invalid_output_rate = weighted_rate(invalid_output_rate_final, n_weight),
+    .groups = "drop"
+  ) |>
+  sort_scenarios() |>
+  mutate(task_label = str_to_upper(str_replace_all(task_name, "_", " ")))
+
+task_summary_percent <- task_summary |>
+  mutate(across(c(correct_rate, error_rate, attack_following_rate, invalid_output_rate), ~ .x * 100))
+
+write_error_csv(task_summary, "06_task_error_summary_fraction.csv")
+write_error_csv(task_summary_percent, "06_task_error_summary_percent.csv")
+
+top_task_errors <- task_summary |>
+  group_by(scenario_short) |>
+  slice_max(error_rate, n = 5, with_ties = FALSE) |>
+  ungroup() |>
+  select(scenario_short, task_label, total, correct_rate, error_rate, attack_following_rate, invalid_output_rate)
+
+write_error_csv(top_task_errors, "07_top_task_errors_by_scenario_fraction.csv")
+
+top_task_errors |>
+  mutate(across(c(correct_rate, error_rate, attack_following_rate, invalid_output_rate), ~ fmt_pct(.x))) |>
+  knitr::kable(
+    caption = "Tabela 4 — Tarefas com maior taxa de erro sob ataque por cenário."
+  )
+```
+
+```{r fig-task-error-heatmap, fig.width=10.5, fig.height=6.5}
+task_levels <- task_summary |>
+  group_by(task_label) |>
+  summarise(mean_error = mean(error_rate, na.rm = TRUE), .groups = "drop") |>
+  arrange(desc(mean_error)) |>
+  pull(task_label)
+
+p_task_error_heatmap <- task_summary |>
+  mutate(task_label = factor(task_label, levels = task_levels)) |>
+  ggplot(aes(x = task_label, y = scenario_short, fill = error_rate)) +
+  geom_tile(color = "white", linewidth = 0.4) +
+  geom_text(aes(label = fmt_pct(error_rate)), size = 3) +
+  scale_fill_gradientn(
+    colours = coolwarm_cols,
+    labels = pct_axis,
+    limits = c(0, 1),
+    name = "Error rate"
+  ) +
+  labs(
+    title = "Task error rate under attack",
+    subtitle = "Cores quentes indicam maior erro na tarefa original.",
+    x = "Task",
+    y = NULL
+  ) +
+  base_theme() +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+print(p_task_error_heatmap)
+
+save_error_figure(
+  p_task_error_heatmap,
+  "04_task_error_rate_heatmap.png",
+  width = 10.5,
+  height = 6.5
+)
+```
+
+# Seen vs unseen
+
+```{r seen-unseen-analysis}
+seen_unseen <- seen_unseen_raw |>
+  add_scenario_info()
+
+seen_unseen$total_weight <- coalesce_col(seen_unseen, c("total", "n_examples"))
+seen_unseen$correct_rate_final <- coalesce_col(seen_unseen, c("correct_rate", "robust_accuracy", "task_success_rate"))
+seen_unseen$error_rate_final <- dplyr::coalesce(
+  coalesce_col(seen_unseen, c("error_rate", "untargeted_asr")),
+  1 - seen_unseen$correct_rate_final
+)
+seen_unseen$attack_following_rate_final <- coalesce_col(
+  seen_unseen,
+  c("attack_following_rate", "injection_following_rate", "targeted_asr", "attack_success_rate", "binary_asv")
+)
+seen_unseen$invalid_output_rate_final <- coalesce_col(seen_unseen, c("invalid_output_rate"))
+
+seen_unseen_summary <- seen_unseen |>
+  filter(eval_split != "test_clean") |>
+  group_by(scenario_id, scenario_short, scenario_label, eval_split) |>
+  summarise(
+    total = sum(total_weight, na.rm = TRUE),
+    correct_rate = weighted_rate(correct_rate_final, total_weight),
+    error_rate = weighted_rate(error_rate_final, total_weight),
+    attack_following_rate = weighted_rate(attack_following_rate_final, total_weight),
+    invalid_output_rate = weighted_rate(invalid_output_rate_final, total_weight),
+    .groups = "drop"
+  ) |>
+  sort_scenarios() |>
+  mutate(
+    attack_group = case_when(
+      eval_split == "test_attacked_seen" ~ "Seen attacks",
+      eval_split == "test_attacked_unseen" ~ "Unseen attacks",
+      TRUE ~ eval_split
+    )
+  )
+
+write_error_csv(seen_unseen_summary, "08_seen_vs_unseen_error_summary_fraction.csv")
+write_error_csv(
+  seen_unseen_summary |>
+    mutate(across(c(correct_rate, error_rate, attack_following_rate, invalid_output_rate), ~ .x * 100)),
+  "08_seen_vs_unseen_error_summary_percent.csv"
+)
+
+seen_unseen_summary |>
+  select(scenario_short, attack_group, total, correct_rate, error_rate, attack_following_rate, invalid_output_rate) |>
+  mutate(across(c(correct_rate, error_rate, attack_following_rate, invalid_output_rate), ~ fmt_pct(.x))) |>
+  knitr::kable(
+    caption = "Tabela 5 — Padrões de erro em ataques vistos e não vistos."
+  )
+```
+
+```{r fig-seen-unseen-ifr, fig.width=9.5, fig.height=6}
+p_seen_unseen_ifr <- seen_unseen_summary |>
+  ggplot(aes(x = attack_following_rate, y = scenario_short, color = scenario_short)) +
+  geom_line(aes(group = scenario_short), linewidth = 0.8, alpha = 0.45, show.legend = FALSE) +
+  geom_point(aes(shape = attack_group), size = 3.3) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = pct_axis) +
+  labs(
+    title = "Seen vs unseen Injection Following Rate",
+    subtitle = "Compara a taxa de seguimento da injeção entre ataques vistos e não vistos.",
+    x = "Injection Following Rate",
+    y = NULL,
+    shape = NULL
+  ) +
+  base_theme()
+
+print(p_seen_unseen_ifr)
+
+save_error_figure(
+  p_seen_unseen_ifr,
+  "05_seen_vs_unseen_injection_following_rate.png",
+  width = 9.5,
+  height = 6
+)
+```
+
+```{r fig-seen-unseen-error, fig.width=9.5, fig.height=6}
+p_seen_unseen_error <- seen_unseen_summary |>
+  ggplot(aes(x = error_rate, y = scenario_short, color = scenario_short)) +
+  geom_line(aes(group = scenario_short), linewidth = 0.8, alpha = 0.45, show.legend = FALSE) +
+  geom_point(aes(shape = attack_group), size = 3.3) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = pct_axis) +
+  labs(
+    title = "Seen vs unseen error rate",
+    subtitle = "Compara erro na tarefa original entre ataques vistos e não vistos.",
+    x = "Error rate",
+    y = NULL,
+    shape = NULL
+  ) +
+  base_theme()
+
+print(p_seen_unseen_error)
+
+save_error_figure(
+  p_seen_unseen_error,
+  "06_seen_vs_unseen_error_rate.png",
+  width = 9.5,
+  height = 6
+)
+```
+
+# Comparação pareada contra C0
+
+Esta seção usa os mesmos exemplos pareados contra C0 para separar ganhos robustos, regressões limpas, melhorias limpas e redução de seguimento da injeção.
+
+```{r paired-vs-c0-analysis}
+if (is.null(paired_vs_c0_raw)) {
+  cat("Tabela pareada contra C0 não encontrada.")
+} else {
+  paired_vs_c0 <- paired_vs_c0_raw |>
+    add_scenario_info() |>
+    filter(scenario_id != "c0_base")
+
+  paired_summary <- paired_vs_c0 |>
+    group_by(scenario_id, scenario_short, scenario_label, eval_split) |>
+    summarise(
+      paired_examples = sum(paired_examples, na.rm = TRUE),
+      robust_wins_vs_c0 = sum(robust_wins_vs_c0, na.rm = TRUE),
+      clean_regressions_vs_c0 = sum(clean_regressions_vs_c0, na.rm = TRUE),
+      clean_improvements_vs_c0 = sum(clean_improvements_vs_c0, na.rm = TRUE),
+      attack_following_reductions_vs_c0 = sum(attack_following_reductions_vs_c0, na.rm = TRUE),
+      robust_wins_vs_c0_rate = safe_rate(robust_wins_vs_c0, paired_examples),
+      clean_regressions_vs_c0_rate = safe_rate(clean_regressions_vs_c0, paired_examples),
+      clean_improvements_vs_c0_rate = safe_rate(clean_improvements_vs_c0, paired_examples),
+      attack_following_reductions_vs_c0_rate = safe_rate(attack_following_reductions_vs_c0, paired_examples),
+      .groups = "drop"
+    ) |>
+    sort_scenarios() |>
+    mutate(
+      eval_group = case_when(
+        eval_split == "test_clean" ~ "Clean",
+        eval_split == "test_attacked_seen" ~ "Seen attacks",
+        eval_split == "test_attacked_unseen" ~ "Unseen attacks",
+        TRUE ~ eval_split
+      )
+    )
+
+  write_error_csv(paired_summary, "09_paired_summary_vs_c0_fraction.csv")
+  write_error_csv(
+    paired_summary |>
+      mutate(across(ends_with("_rate"), ~ .x * 100)),
+    "09_paired_summary_vs_c0_percent.csv"
+  )
+
+  paired_summary |>
+    select(
+      scenario_short,
+      eval_group,
+      paired_examples,
+      robust_wins_vs_c0_rate,
+      attack_following_reductions_vs_c0_rate,
+      clean_improvements_vs_c0_rate,
+      clean_regressions_vs_c0_rate
+    ) |>
+    mutate(across(ends_with("_rate"), ~ fmt_pct(.x))) |>
+    knitr::kable(
+      caption = "Tabela 6 — Comparação pareada contra C0."
+    )
+}
+```
+
+```{r fig-paired-vs-c0-attacked, fig.width=10.5, fig.height=6.5}
+if (exists("paired_summary")) {
+  paired_attacked_long <- paired_summary |>
+    filter(eval_group %in% c("Seen attacks", "Unseen attacks")) |>
+    select(
+      scenario_short,
+      eval_group,
+      robust_wins_vs_c0_rate,
+      attack_following_reductions_vs_c0_rate
+    ) |>
+    pivot_longer(
+      cols = ends_with("_rate"),
+      names_to = "metric",
+      values_to = "rate"
+    ) |>
+    mutate(
+      metric_label = case_when(
+        metric == "robust_wins_vs_c0_rate" ~ "Robust wins vs C0",
+        metric == "attack_following_reductions_vs_c0_rate" ~ "Attack-following reductions vs C0",
+        TRUE ~ metric
+      )
+    )
+
+  p_paired_attacked <- paired_attacked_long |>
+    ggplot(aes(x = scenario_short, y = rate, fill = scenario_short)) +
+    geom_col(width = 0.72, show.legend = FALSE) +
+    facet_grid(metric_label ~ eval_group) +
+    scale_fill_manual(values = scenario_palette, drop = FALSE) +
+    scale_y_continuous(labels = pct_axis) +
+    labs(
+      title = "Paired gains vs C0 under attack",
+      subtitle = "Mede melhorias nos mesmos exemplos em que C0 também foi avaliado.",
+      x = NULL,
+      y = "Rate"
+    ) +
+    base_theme()
+
+  print(p_paired_attacked)
+
+  save_error_figure(
+    p_paired_attacked,
+    "07_paired_gains_vs_c0_under_attack.png",
+    width = 10.5,
+    height = 6.5
+  )
+}
+```
+
+```{r fig-paired-vs-c0-clean, fig.width=9.5, fig.height=5.8}
+if (exists("paired_summary")) {
+  paired_clean_long <- paired_summary |>
+    filter(eval_group == "Clean") |>
+    select(
+      scenario_short,
+      clean_improvements_vs_c0_rate,
+      clean_regressions_vs_c0_rate
+    ) |>
+    pivot_longer(
+      cols = ends_with("_rate"),
+      names_to = "metric",
+      values_to = "rate"
+    ) |>
+    mutate(
+      metric_label = case_when(
+        metric == "clean_improvements_vs_c0_rate" ~ "Clean improvements vs C0",
+        metric == "clean_regressions_vs_c0_rate" ~ "Clean regressions vs C0",
+        TRUE ~ metric
+      )
+    )
+
+  p_paired_clean <- paired_clean_long |>
+    ggplot(aes(x = scenario_short, y = rate, fill = scenario_short)) +
+    geom_col(width = 0.72, show.legend = FALSE) +
+    facet_wrap(~ metric_label) +
+    scale_fill_manual(values = scenario_palette, drop = FALSE) +
+    scale_y_continuous(labels = pct_axis) +
+    labs(
+      title = "Paired clean changes vs C0",
+      subtitle = "Mostra melhorias e regressões nos exemplos limpos pareados contra C0.",
+      x = NULL,
+      y = "Rate"
+    ) +
+    base_theme()
+
+  print(p_paired_clean)
+
+  save_error_figure(
+    p_paired_clean,
+    "08_paired_clean_changes_vs_c0.png",
+    width = 9.5,
+    height = 5.8
+  )
+}
+```
+
+# Saídas inválidas
+
+```{r invalid-outputs-analysis}
+if (is.null(invalid_outputs_raw)) {
+  cat("Tabela de saídas inválidas não encontrada.")
+} else {
+  invalid_outputs <- invalid_outputs_raw |>
+    add_scenario_info() |>
+    mutate(
+      task_label = str_to_upper(str_replace_all(task_name, "_", " ")),
+      attack_type_label = str_to_title(str_replace_all(attack_type, "_", " "))
+    )
+
+  invalid_by_scenario <- invalid_outputs |>
+    group_by(scenario_id, scenario_short, scenario_label) |>
+    summarise(invalid_count = sum(invalid_count, na.rm = TRUE), .groups = "drop") |>
+    sort_scenarios()
+
+  invalid_by_task_attack <- invalid_outputs |>
+    group_by(scenario_id, scenario_short, task_label, attack_type_label) |>
+    summarise(invalid_count = sum(invalid_count, na.rm = TRUE), .groups = "drop") |>
+    sort_scenarios() |>
+    arrange(desc(invalid_count))
+
+  write_error_csv(invalid_by_scenario, "10_invalid_outputs_by_scenario.csv")
+  write_error_csv(invalid_by_task_attack, "11_invalid_outputs_by_task_attack.csv")
+
+  invalid_by_task_attack |>
+    head(20) |>
+    knitr::kable(
+      caption = "Tabela 7 — Maiores concentrações de saídas inválidas."
+    )
+}
+```
+
+```{r fig-invalid-outputs, fig.width=8.5, fig.height=5.5}
+if (exists("invalid_by_scenario")) {
+  p_invalid_counts <- invalid_by_scenario |>
+    ggplot(aes(x = scenario_short, y = invalid_count, fill = scenario_short)) +
+    geom_col(width = 0.72, show.legend = FALSE) +
+    geom_text(aes(label = invalid_count), vjust = -0.35, size = 3.5) +
+    scale_fill_manual(values = scenario_palette, drop = FALSE) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+    labs(
+      title = "Invalid outputs by scenario",
+      subtitle = "Contagem absoluta de saídas inválidas identificadas na análise de erro.",
+      x = NULL,
+      y = "Invalid output count"
+    ) +
+    base_theme()
+
+  print(p_invalid_counts)
+
+  save_error_figure(
+    p_invalid_counts,
+    "09_invalid_outputs_by_scenario.png",
+    width = 8.5,
+    height = 5.5
+  )
+}
+```
+
+# Falhas compartilhadas
+
+Esta seção identifica exemplos em que vários cenários falham simultaneamente. Isso é útil para distinguir falhas específicas de um método e falhas difíceis do benchmark.
+
+```{r shared-failures-analysis}
+if (is.null(shared_failure_summary_raw)) {
+  cat("Tabela de falhas compartilhadas não encontrada.")
+} else {
+  shared_failure_summary <- shared_failure_summary_raw |>
+    mutate(
+      task_label = str_to_upper(str_replace_all(task_name, "_", " ")),
+      attack_type_label = str_to_title(str_replace_all(attack_type, "_", " "))
+    ) |>
+    arrange(desc(all_trained_scenarios_failed_rate))
+
+  write_error_csv(shared_failure_summary, "12_shared_failure_summary_fraction.csv")
+  write_error_csv(
+    shared_failure_summary |>
+      mutate(across(ends_with("_rate"), ~ .x * 100)),
+    "12_shared_failure_summary_percent.csv"
+  )
+
+  shared_failure_summary |>
+    select(
+      eval_split,
+      task_label,
+      attack_type_label,
+      examples,
+      all_scenarios_failed_rate,
+      all_trained_scenarios_failed_rate
+    ) |>
+    mutate(across(ends_with("_rate"), ~ fmt_pct(.x))) |>
+    head(20) |>
+    knitr::kable(
+      caption = "Tabela 8 — Grupos task/attack com maior taxa de falha compartilhada."
+    )
+}
+```
+
+```{r fig-shared-failures, fig.width=10.5, fig.height=6.2}
+if (exists("shared_failure_summary")) {
+  shared_plot_data <- shared_failure_summary |>
+    mutate(group_label = paste(task_label, attack_type_label, sep = " / ")) |>
+    slice_max(all_trained_scenarios_failed_rate, n = 15, with_ties = FALSE) |>
+    mutate(group_label = fct_reorder(group_label, all_trained_scenarios_failed_rate))
+
+  p_shared_failures <- shared_plot_data |>
+    ggplot(aes(x = all_trained_scenarios_failed_rate, y = group_label)) +
+    geom_col(fill = "#B40426", width = 0.72) +
+    geom_text(aes(label = fmt_pct(all_trained_scenarios_failed_rate)), hjust = -0.1, size = 3.2) +
+    scale_x_continuous(labels = pct_axis, expand = expansion(mult = c(0, 0.12))) +
+    labs(
+      title = "Shared failures among trained scenarios",
+      subtitle = "Maiores taxas de falha simultânea entre C2, C3 e C4.",
+      x = "All trained scenarios failed rate",
+      y = NULL
+    ) +
+    base_theme()
+
+  print(p_shared_failures)
+
+  save_error_figure(
+    p_shared_failures,
+    "10_shared_failures_trained_scenarios.png",
+    width = 10.5,
+    height = 6.2
+  )
+}
+```
+
+# Exemplos qualitativos seguros
+
+Os arquivos `safe_samples` removem campos longos e são mais adequados para visualização em relatório. Aqui exibimos uma amostra compacta por categoria.
+
+```{r safe-sample-helper}
+read_safe_sample <- function(category, n = 8) {
+  path <- file.path(SAFE_SAMPLE_DIR, paste0(category, "_safe.jsonl"))
+
+  if (!file.exists(path)) {
+    return(NULL)
+  }
+
+  con <- file(path, open = "r", encoding = "UTF-8")
+  on.exit(close(con), add = TRUE)
+
+  df <- jsonlite::stream_in(con, verbose = FALSE) |>
+    as_tibble()
+
+  if (nrow(df) == 0) {
+    return(NULL)
+  }
+
+  # Alguns arquivos safe_samples são por cenário e têm scenario_label.
+  # Outros, como shared_trained_failures, são agregados por exemplo e não têm
+  # scenario_label/scenario_id. Por isso criamos scenario_short de forma segura.
+  if (!("scenario_label" %in% names(df))) {
+    df$scenario_label <- NA_character_
+  }
+
+  if (!("scenario_id" %in% names(df))) {
+    df$scenario_id <- NA_character_
+  }
+
+  df |>
+    mutate(
+      scenario_short = case_when(
+        str_detect(coalesce(as.character(scenario_label), ""), "^C0") ~ "C0",
+        str_detect(coalesce(as.character(scenario_label), ""), "^C1") ~ "C1",
+        str_detect(coalesce(as.character(scenario_label), ""), "^C2") ~ "C2",
+        str_detect(coalesce(as.character(scenario_label), ""), "^C3") ~ "C3",
+        str_detect(coalesce(as.character(scenario_label), ""), "^C4") ~ "C4",
+        scenario_id == "c0_base" ~ "C0",
+        scenario_id == "c1_struq_format_only" ~ "C1",
+        scenario_id == "c2_struq_sft" ~ "C2",
+        scenario_id == "c3_secalign_dpo" ~ "C3",
+        scenario_id == "c4_ih_sft" ~ "C4",
+        TRUE ~ "Shared / aggregate"
+      )
+    ) |>
+    select(any_of(c(
+      "scenario_short",
+      "scenario_label",
+      "eval_split",
+      "example_id",
+      "example_key",
+      "task_name",
+      "attack_type",
+      "seen_in_training",
+      "expected_answer",
+      "attack_target",
+      "normalized_output",
+      "reference_normalized_output",
+      "failure_type",
+      "reference_failure_type",
+      "all_scenarios_failed",
+      "all_trained_scenarios_failed",
+      "robust_win_vs_c0",
+      "clean_regression_vs_c0",
+      "clean_improvement_vs_c0",
+      "attack_following_reduction_vs_c0"
+    ))) |>
+    head(n)
+}
+```
+
+```{r qualitative-samples}
+sample_categories <- c(
+  "robust_wins_vs_c0",
+  "attack_following_reductions_vs_c0",
+  "clean_improvements_vs_c0",
+  "clean_regressions_vs_c0",
+  "invalid_outputs",
+  "shared_trained_failures"
+)
+
+for (category in sample_categories) {
+  sample_df <- read_safe_sample(category, n = 8)
+
+  cat("\n\n## Sample:", category, "\n\n")
+
+  if (is.null(sample_df)) {
+    cat("Amostra não encontrada.\n")
+  } else {
+    write_error_csv(sample_df, paste0("sample_", category, ".csv"))
+    print(knitr::kable(sample_df, caption = paste("Amostra segura —", category)))
+  }
+}
+```
+
+# Resumo executivo da análise de erro
+
+```{r executive-summary-tables}
+error_summary_for_report <- failure_wide |>
+  mutate(
+    main_error_signal = case_when(
+      `Followed attack` > `Wrong other` & `Followed attack` > `Invalid output` ~ "followed_attack",
+      `Wrong other` > `Followed attack` & `Wrong other` > `Invalid output` ~ "wrong_other",
+      `Invalid output` > `Followed attack` & `Invalid output` > `Wrong other` ~ "invalid_output",
+      TRUE ~ "mixed"
+    )
+  )
+
+write_error_csv(error_summary_for_report, "13_error_summary_for_report_fraction.csv")
+
+error_summary_for_report |>
+  mutate(across(where(is.numeric), ~ fmt_pct(.x))) |>
+  knitr::kable(
+    caption = "Tabela 9 — Resumo executivo da decomposição de erros sob ataque."
+  )
+```
+
+# Arquivos gerados
+
+Este Rmd salva tabelas em:
+
+```text
+tables/error_analysis/
+```
+
+e figuras em:
+
+```text
+figures/error_analysis/
+```
+
+Figuras principais geradas:
+
+```text
+01_failure_taxonomy_under_attack.png
+02_attack_type_injection_following_heatmap.png
+03_attack_type_scatter_correct_vs_ifr.png
+04_task_error_rate_heatmap.png
+05_seen_vs_unseen_injection_following_rate.png
+06_seen_vs_unseen_error_rate.png
+07_paired_gains_vs_c0_under_attack.png
+08_paired_clean_changes_vs_c0.png
+09_invalid_outputs_by_scenario.png
+10_shared_failures_trained_scenarios.png
+```

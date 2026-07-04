@@ -1,0 +1,1411 @@
+---
+title: "RPC-PI Experiment — Paper-ready Figures"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6,
+  dpi = 300
+)
+
+options(knitr.kable.NA = "—")
+
+required_packages <- c(
+  "tidyverse",
+  "readr",
+  "ggplot2",
+  "ggrepel",
+  "patchwork",
+  "scales",
+  "stringr",
+  "forcats",
+  "fs",
+  "here",
+  "knitr",
+  "viridis"
+)
+
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+library(scales)
+library(stringr)
+library(forcats)
+library(fs)
+library(here)
+library(knitr)
+library(viridis)
+```
+
+# Objetivo
+
+Este R Markdown gera uma versão **paper-ready** das figuras do experimento RPC-PI a partir das tabelas produzidas no `01_descriptive_metrics.Rmd` e, quando necessário, dos arquivos originais em `data/results/`.
+
+As decisões visuais desta versão são:
+
+1. cada cenário usa uma cor própria e consistente em todos os gráficos comparativos;
+2. os gráficos de barras usam apenas os nomes curtos `C0`, `C1`, `C2`, `C3` e `C4`;
+3. os heatmaps usam uma paleta divergente estilo **coolwarm**;
+4. as figuras principais são exportadas em alta resolução para `figures/paper_ready/`;
+5. além das figuras principais, este notebook inclui gráficos extras úteis para paper: deltas contra C0, gap seen/unseen, MR targeted, PNA-I e adjusted win rate.
+
+# Caminhos e dados
+
+```{r paths-and-data}
+DATA_DIR <- here::here("data", "results")
+DESC_DIR <- here::here("tables", "descriptive")
+MAIN_TABLES_DIR <- here::here("tables", "paper_ready_figures")
+FIG_DIR <- here::here("figures", "paper_ready")
+
+fs::dir_create(FIG_DIR)
+fs::dir_create(MAIN_TABLES_DIR)
+
+if (!dir.exists(DATA_DIR)) {
+  stop(
+    "Não encontrei data/results/. Extraia o ZIP primeiro com: ",
+    "unzip('results.zip', exdir = 'data')"
+  )
+}
+
+if (!dir.exists(DESC_DIR)) {
+  stop(
+    "Não encontrei tables/descriptive/. Rode primeiro o Rmd 01_descriptive_metrics.Rmd."
+  )
+}
+```
+
+# Funções auxiliares
+
+```{r helpers}
+read_first_existing <- function(paths, required = TRUE) {
+  existing <- paths[file.exists(paths)]
+
+  if (length(existing) == 0) {
+    if (required) {
+      stop("Nenhum destes arquivos foi encontrado:\n", paste(paths, collapse = "\n"))
+    }
+    return(NULL)
+  }
+
+  readr::read_csv(existing[[1]], show_col_types = FALSE)
+}
+
+coalesce_col <- function(df, cols, default = NA_real_) {
+  existing <- cols[cols %in% names(df)]
+
+  if (length(existing) == 0) {
+    return(rep(default, nrow(df)))
+  }
+
+  out <- df[[existing[[1]]]]
+  if (length(existing) > 1) {
+    for (nm in existing[-1]) {
+      out <- dplyr::coalesce(out, df[[nm]])
+    }
+  }
+  out
+}
+
+weighted_rate <- function(rate, weight) {
+  valid <- !is.na(rate) & !is.na(weight) & weight > 0
+  if (!any(valid)) return(NA_real_)
+  sum(rate[valid] * weight[valid]) / sum(weight[valid])
+}
+
+safe_sd <- function(x) {
+  if (sum(!is.na(x)) <= 1) return(NA_real_)
+  sd(x, na.rm = TRUE)
+}
+
+scenario_order <- c(
+  "c0_base",
+  "c1_struq_format_only",
+  "c2_struq_sft",
+  "c3_secalign_dpo",
+  "c4_ih_sft"
+)
+
+scenario_short_map <- c(
+  c0_base = "C0",
+  c1_struq_format_only = "C1",
+  c2_struq_sft = "C2",
+  c3_secalign_dpo = "C3",
+  c4_ih_sft = "C4"
+)
+
+scenario_palette <- c(
+  C0 = "#7F7F7F",  # baseline
+  C1 = "#D55E00",  # format-only
+  C2 = "#0072B2",  # StruQ-like SFT
+  C3 = "#CC79A7",  # DPO
+  C4 = "#009E73"   # Instruction-Hierarchy-like SFT
+)
+
+sort_scenarios <- function(df) {
+  df |>
+    mutate(scenario_id = factor(scenario_id, levels = scenario_order)) |>
+    arrange(scenario_id) |>
+    mutate(scenario_id = as.character(scenario_id))
+}
+
+make_scenario_short <- function(scenario_id) {
+  out <- unname(scenario_short_map[scenario_id])
+  ifelse(is.na(out), scenario_id, out)
+}
+
+ordered_scenario_short <- function(x) {
+  factor(x, levels = c("C0", "C1", "C2", "C3", "C4"))
+}
+
+add_scenario_info <- function(df) {
+  joined <- df |>
+    left_join(scenario_lookup, by = "scenario_id", suffix = c("", "_lookup"))
+
+  if (!("scenario_label" %in% names(joined))) {
+    joined$scenario_label <- joined$scenario_id
+  }
+
+  if ("scenario_label_lookup" %in% names(joined)) {
+    joined <- joined |>
+      mutate(
+        scenario_label = coalesce(
+          as.character(scenario_label),
+          as.character(scenario_label_lookup)
+        )
+      )
+  }
+
+  if (!("scenario_short" %in% names(joined))) {
+    joined$scenario_short <- make_scenario_short(joined$scenario_id)
+  }
+
+  if ("scenario_short_lookup" %in% names(joined)) {
+    joined <- joined |>
+      mutate(
+        scenario_short = coalesce(
+          as.character(scenario_short),
+          as.character(scenario_short_lookup)
+        )
+      )
+  }
+
+  joined |>
+    select(-any_of(c("scenario_label_lookup", "scenario_short_lookup")))
+}
+
+figure_index <- tibble(
+  figure = character(),
+  file = character(),
+  description = character()
+)
+
+record_figure <- function(filename, title, description) {
+  figure_index <<- bind_rows(
+    figure_index,
+    tibble(
+      figure = title,
+      file = file.path("figures", "paper_ready", filename),
+      description = description
+    )
+  )
+  invisible(NULL)
+}
+
+save_figure <- function(plot, filename, title, description, width = 10, height = 6) {
+  ggsave(
+    filename = file.path(FIG_DIR, filename),
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = 320,
+    bg = "white"
+  )
+
+  record_figure(filename, title, description)
+  invisible(plot)
+}
+
+base_theme <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      legend.position = "bottom",
+      plot.title.position = "plot",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey30"),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(face = "bold")
+    )
+}
+
+pct_axis <- scales::percent_format(accuracy = 1)
+pct_axis_small <- scales::percent_format(accuracy = 0.1)
+
+coolwarm_cols <- c(
+  "#3B4CC0",
+  "#8DB0FE",
+  "#F7F7F7",
+  "#F4987A",
+  "#B40426"
+)
+```
+
+# Carregamento e preparação
+
+```{r load-and-prepare}
+run_level <- read_first_existing(c(
+  file.path(DESC_DIR, "06_run_level_metrics_recomputed.csv"),
+  file.path(DATA_DIR, "metrics", "full", "run_level_metrics.csv")
+)) |>
+  sort_scenarios()
+
+if (!("scenario_label" %in% names(run_level))) {
+  run_level <- run_level |>
+    mutate(scenario_label = scenario_id)
+}
+
+run_level <- run_level |>
+  mutate(
+    scenario_short = make_scenario_short(scenario_id),
+    scenario_short = ordered_scenario_short(scenario_short)
+  )
+
+run_level$injection_following_rate_seen <- coalesce_col(
+  run_level,
+  c("injection_following_rate_seen", "targeted_asr_seen", "attack_success_rate_seen", "binary_asv_seen")
+)
+run_level$injection_following_rate_unseen <- coalesce_col(
+  run_level,
+  c("injection_following_rate_unseen", "targeted_asr_unseen", "attack_success_rate_unseen", "binary_asv_unseen")
+)
+run_level$injection_following_rate_all_attacks <- coalesce_col(
+  run_level,
+  c("injection_following_rate_all_attacks", "targeted_asr_all_attacks", "attack_success_rate_all_attacks", "binary_asv_all_attacks")
+)
+
+run_level$targeted_asr_seen <- coalesce_col(
+  run_level,
+  c("targeted_asr_seen", "injection_following_rate_seen", "attack_success_rate_seen", "binary_asv_seen")
+)
+run_level$targeted_asr_unseen <- coalesce_col(
+  run_level,
+  c("targeted_asr_unseen", "injection_following_rate_unseen", "attack_success_rate_unseen", "binary_asv_unseen")
+)
+run_level$targeted_asr_all_attacks <- coalesce_col(
+  run_level,
+  c("targeted_asr_all_attacks", "injection_following_rate_all_attacks", "attack_success_rate_all_attacks", "binary_asv_all_attacks")
+)
+
+scenario_lookup <- run_level |>
+  distinct(scenario_id, scenario_label, scenario_short)
+
+scenario_summary <- run_level |>
+  group_by(scenario_id, scenario_label, scenario_short) |>
+  summarise(
+    n_seeds = n_distinct(seed),
+    clean_accuracy = mean(clean_accuracy, na.rm = TRUE),
+    clean_accuracy_sd = safe_sd(clean_accuracy),
+    robust_accuracy_all_attacks = mean(robust_accuracy_all_attacks, na.rm = TRUE),
+    robust_accuracy_all_attacks_sd = safe_sd(robust_accuracy_all_attacks),
+    targeted_asr_all_attacks = mean(targeted_asr_all_attacks, na.rm = TRUE),
+    targeted_asr_all_attacks_sd = safe_sd(targeted_asr_all_attacks),
+    injection_following_rate_all_attacks = mean(injection_following_rate_all_attacks, na.rm = TRUE),
+    injection_following_rate_all_attacks_sd = safe_sd(injection_following_rate_all_attacks),
+    untargeted_asr_all_attacks = mean(untargeted_asr_all_attacks, na.rm = TRUE),
+    untargeted_asr_all_attacks_sd = safe_sd(untargeted_asr_all_attacks),
+    invalid_output_rate_all_attacks = mean(invalid_output_rate_all_attacks, na.rm = TRUE),
+    invalid_output_rate_all_attacks_sd = safe_sd(invalid_output_rate_all_attacks),
+    utility_under_attack_all_attacks = mean(utility_under_attack_all_attacks, na.rm = TRUE),
+    utility_under_attack_all_attacks_sd = safe_sd(utility_under_attack_all_attacks),
+    utility_drop = mean(utility_drop, na.rm = TRUE),
+    utility_drop_sd = safe_sd(utility_drop),
+    robust_accuracy_seen = mean(robust_accuracy_seen, na.rm = TRUE),
+    injection_following_rate_seen = mean(injection_following_rate_seen, na.rm = TRUE),
+    robust_accuracy_unseen = mean(robust_accuracy_unseen, na.rm = TRUE),
+    injection_following_rate_unseen = mean(injection_following_rate_unseen, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    across(where(is.numeric), ~ ifelse(is.nan(.x) | is.infinite(.x), NA_real_, .x)),
+    scenario_short = ordered_scenario_short(as.character(scenario_short))
+  ) |>
+  sort_scenarios()
+
+readr::write_csv(
+  scenario_summary,
+  file.path(MAIN_TABLES_DIR, "figures_scenario_summary_fraction.csv")
+)
+
+scenario_summary |>
+  select(
+    scenario_short,
+    n_seeds,
+    clean_accuracy,
+    robust_accuracy_all_attacks,
+    injection_following_rate_all_attacks,
+    invalid_output_rate_all_attacks,
+    utility_drop
+  ) |>
+  mutate(across(where(is.numeric) & !matches("n_seeds"), ~ .x * 100)) |>
+  knitr::kable(
+    digits = 2,
+    caption = "Resumo das métricas usadas nas figuras principais. Valores em porcentagem."
+  )
+```
+
+# Figura 1 — Clean accuracy vs Injection Following Rate
+
+```{r fig-clean-vs-ifr, fig.width=9, fig.height=6}
+p_clean_vs_ifr <- scenario_summary |>
+  ggplot(aes(x = clean_accuracy, y = injection_following_rate_all_attacks, color = scenario_short)) +
+  geom_segment(
+    aes(
+      x = pmax(clean_accuracy - clean_accuracy_sd, 0),
+      xend = pmin(clean_accuracy + clean_accuracy_sd, 1),
+      y = injection_following_rate_all_attacks,
+      yend = injection_following_rate_all_attacks
+    ),
+    alpha = 0.35,
+    na.rm = TRUE,
+    show.legend = FALSE
+  ) +
+  geom_errorbar(
+    aes(
+      ymin = pmax(injection_following_rate_all_attacks - injection_following_rate_all_attacks_sd, 0),
+      ymax = pmin(injection_following_rate_all_attacks + injection_following_rate_all_attacks_sd, 1)
+    ),
+    width = 0.002,
+    alpha = 0.35,
+    na.rm = TRUE,
+    show.legend = FALSE
+  ) +
+  geom_point(size = 4.5) +
+  ggrepel::geom_label_repel(
+    aes(label = scenario_short, fill = scenario_short),
+    seed = 42,
+    min.segment.length = 0,
+    box.padding = 0.35,
+    color = "white",
+    show.legend = FALSE
+  ) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = pct_axis) +
+  scale_y_continuous(labels = pct_axis) +
+  labs(
+    title = "Clean accuracy vs Injection Following Rate",
+    subtitle = "O melhor resultado fica no canto inferior direito: alta utilidade limpa e baixo seguimento da injeção.",
+    x = "Clean accuracy",
+    y = "Injection Following Rate",
+    color = "Scenario"
+  ) +
+  base_theme()
+
+print(p_clean_vs_ifr)
+
+save_figure(
+  p_clean_vs_ifr,
+  "01_clean_accuracy_vs_injection_following_rate.png",
+  "Figure 1 — Clean accuracy vs Injection Following Rate",
+  "Scatter plot showing the utility-security trade-off."
+)
+```
+
+# Figura 2 — Clean accuracy vs Robust accuracy
+
+```{r fig-clean-vs-robust, fig.width=9, fig.height=6}
+p_clean_vs_robust <- scenario_summary |>
+  ggplot(aes(x = clean_accuracy, y = robust_accuracy_all_attacks, color = scenario_short)) +
+  geom_segment(
+    aes(
+      x = pmax(clean_accuracy - clean_accuracy_sd, 0),
+      xend = pmin(clean_accuracy + clean_accuracy_sd, 1),
+      y = robust_accuracy_all_attacks,
+      yend = robust_accuracy_all_attacks
+    ),
+    alpha = 0.35,
+    na.rm = TRUE,
+    show.legend = FALSE
+  ) +
+  geom_errorbar(
+    aes(
+      ymin = pmax(robust_accuracy_all_attacks - robust_accuracy_all_attacks_sd, 0),
+      ymax = pmin(robust_accuracy_all_attacks + robust_accuracy_all_attacks_sd, 1)
+    ),
+    width = 0.002,
+    alpha = 0.35,
+    na.rm = TRUE,
+    show.legend = FALSE
+  ) +
+  geom_point(size = 4.5) +
+  ggrepel::geom_label_repel(
+    aes(label = scenario_short, fill = scenario_short),
+    seed = 42,
+    min.segment.length = 0,
+    box.padding = 0.35,
+    color = "white",
+    show.legend = FALSE
+  ) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = pct_axis) +
+  scale_y_continuous(labels = pct_axis) +
+  labs(
+    title = "Clean accuracy vs Robust accuracy",
+    subtitle = "Cenários no canto superior direito preservam utilidade limpa e acertam a tarefa mesmo sob ataque.",
+    x = "Clean accuracy",
+    y = "Robust accuracy",
+    color = "Scenario"
+  ) +
+  base_theme()
+
+print(p_clean_vs_robust)
+
+save_figure(
+  p_clean_vs_robust,
+  "02_clean_accuracy_vs_robust_accuracy.png",
+  "Figure 2 — Clean accuracy vs Robust accuracy",
+  "Scatter plot comparing clean utility and utility under attack."
+)
+```
+
+# Figura 3 — Utility without attack vs Utility under attack
+
+```{r fig-utility-clean-vs-attacked, fig.width=9, fig.height=6}
+p_utility_clean_vs_attacked <- scenario_summary |>
+  ggplot(aes(x = clean_accuracy, y = utility_under_attack_all_attacks, color = scenario_short)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", alpha = 0.45, color = "grey40") +
+  geom_point(size = 4.5) +
+  ggrepel::geom_label_repel(
+    aes(label = scenario_short, fill = scenario_short),
+    seed = 42,
+    min.segment.length = 0,
+    box.padding = 0.35,
+    color = "white",
+    show.legend = FALSE
+  ) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = pct_axis) +
+  scale_y_continuous(labels = pct_axis) +
+  labs(
+    title = "Utility without attack vs Utility under attack",
+    subtitle = "A linha diagonal indica utilidade preservada. Pontos abaixo da linha perdem desempenho quando atacados.",
+    x = "Clean accuracy",
+    y = "Utility under attack",
+    color = "Scenario"
+  ) +
+  base_theme()
+
+print(p_utility_clean_vs_attacked)
+
+save_figure(
+  p_utility_clean_vs_attacked,
+  "03_utility_without_attack_vs_under_attack.png",
+  "Figure 3 — Utility without attack vs Utility under attack",
+  "Scatter plot comparing clean accuracy with robust accuracy under attacked inputs."
+)
+```
+
+# Figura 4 — Seen vs unseen Injection Following Rate
+
+```{r fig-seen-unseen-ifr, fig.width=10, fig.height=6}
+seen_unseen_ifr <- scenario_summary |>
+  select(
+    scenario_id,
+    scenario_short,
+    injection_following_rate_seen,
+    injection_following_rate_unseen
+  ) |>
+  pivot_longer(
+    cols = c(injection_following_rate_seen, injection_following_rate_unseen),
+    names_to = "attack_group",
+    values_to = "injection_following_rate"
+  ) |>
+  mutate(
+    attack_group = recode(
+      attack_group,
+      injection_following_rate_seen = "Seen attacks",
+      injection_following_rate_unseen = "Unseen attacks"
+    ),
+    scenario_short = ordered_scenario_short(as.character(scenario_short))
+  )
+
+p_seen_unseen_ifr <- seen_unseen_ifr |>
+  ggplot(aes(x = injection_following_rate, y = scenario_short, color = scenario_short)) +
+  geom_line(aes(group = scenario_short), linewidth = 0.8, alpha = 0.45, show.legend = FALSE) +
+  geom_point(aes(shape = attack_group), size = 3.4) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = pct_axis) +
+  labs(
+    title = "Seen vs unseen Injection Following Rate",
+    subtitle = "Quanto menor a taxa, menor o seguimento explícito da instrução adversarial.",
+    x = "Injection Following Rate",
+    y = NULL,
+    color = "Scenario",
+    shape = NULL
+  ) +
+  base_theme()
+
+print(p_seen_unseen_ifr)
+
+save_figure(
+  p_seen_unseen_ifr,
+  "04_seen_vs_unseen_injection_following_rate.png",
+  "Figure 4 — Seen vs unseen Injection Following Rate",
+  "Dumbbell-style comparison of injection following on seen and unseen attack splits."
+)
+```
+
+# Figura 5 — Estabilidade entre seeds
+
+```{r fig-seed-stability, fig.width=11, fig.height=7}
+seed_stability_plot_data <- run_level |>
+  filter(scenario_id %in% c("c2_struq_sft", "c3_secalign_dpo", "c4_ih_sft")) |>
+  select(
+    scenario_short,
+    seed,
+    clean_accuracy,
+    robust_accuracy_all_attacks,
+    injection_following_rate_all_attacks,
+    invalid_output_rate_all_attacks
+  ) |>
+  pivot_longer(
+    cols = c(
+      clean_accuracy,
+      robust_accuracy_all_attacks,
+      injection_following_rate_all_attacks,
+      invalid_output_rate_all_attacks
+    ),
+    names_to = "metric",
+    values_to = "value"
+  ) |>
+  mutate(
+    metric_label = case_when(
+      metric == "clean_accuracy" ~ "Clean accuracy",
+      metric == "robust_accuracy_all_attacks" ~ "Robust accuracy",
+      metric == "injection_following_rate_all_attacks" ~ "Injection Following Rate",
+      metric == "invalid_output_rate_all_attacks" ~ "Invalid output rate",
+      TRUE ~ metric
+    ),
+    metric_label = factor(
+      metric_label,
+      levels = c(
+        "Clean accuracy",
+        "Robust accuracy",
+        "Injection Following Rate",
+        "Invalid output rate"
+      )
+    ),
+    scenario_short = factor(scenario_short, levels = c("C2", "C3", "C4"))
+  )
+
+p_seed_stability <- seed_stability_plot_data |>
+  ggplot(aes(x = scenario_short, y = value, color = scenario_short, group = interaction(scenario_short, seed))) +
+  geom_point(aes(shape = factor(seed)), size = 2.8, alpha = 0.9, position = position_jitter(width = 0.045, height = 0)) +
+  stat_summary(fun = mean, geom = "point", size = 5, shape = 95, show.legend = FALSE) +
+  facet_wrap(~ metric_label, ncol = 2, scales = "free_y") +
+  scale_color_manual(values = scenario_palette[c("C2", "C3", "C4")], drop = FALSE) +
+  scale_y_continuous(labels = pct_axis) +
+  labs(
+    title = "Seed stability for trained models",
+    subtitle = "Pontos mostram seeds individuais; a barra horizontal mostra a média do cenário.",
+    x = "Scenario",
+    y = "Metric value",
+    color = "Scenario",
+    shape = "Seed"
+  ) +
+  base_theme()
+
+print(p_seed_stability)
+
+save_figure(
+  p_seed_stability,
+  "05_seed_stability_trained_models.png",
+  "Figure 5 — Seed stability for trained models",
+  "Per-seed metric distribution for C2, C3 and C4."
+)
+```
+
+# Figura 6 — Invalid output rate
+
+```{r fig-invalid-output, fig.width=9, fig.height=5.5}
+invalid_plot_data <- scenario_summary |>
+  mutate(scenario_short = ordered_scenario_short(as.character(scenario_short)))
+
+p_invalid <- invalid_plot_data |>
+  ggplot(aes(x = scenario_short, y = invalid_output_rate_all_attacks, fill = scenario_short)) +
+  geom_col(width = 0.72) +
+  geom_text(
+    aes(label = scales::percent(invalid_output_rate_all_attacks, accuracy = 0.01)),
+    vjust = -0.35,
+    size = 3.5,
+    color = "black"
+  ) +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = pct_axis_small, expand = expansion(mult = c(0, 0.12))) +
+  labs(
+    title = "Invalid output rate under attack",
+    subtitle = "Uma defesa boa deve reduzir o seguimento da injeção sem depender de respostas inválidas.",
+    x = NULL,
+    y = "Invalid output rate",
+    fill = "Scenario"
+  ) +
+  base_theme()
+
+print(p_invalid)
+
+save_figure(
+  p_invalid,
+  "06_invalid_output_rate_under_attack.png",
+  "Figure 6 — Invalid output rate under attack",
+  "Bar chart showing invalid output rate for attacked examples."
+)
+```
+
+# Preparação de dados por tipo de ataque
+
+```{r prepare-attack-type-data}
+attack_type_raw <- read_first_existing(c(
+  file.path(DESC_DIR, "12_metrics_by_attack_type_recomputed.csv"),
+  file.path(DATA_DIR, "metrics", "full", "attack_type_level_metrics.csv"),
+  file.path(DATA_DIR, "error_analysis", "full", "tables", "error_rates_by_attack_type.csv")
+), required = FALSE)
+
+attack_type_heatmap <- NULL
+attack_type_radar <- NULL
+
+if (!is.null(attack_type_raw)) {
+  attack_type_data <- add_scenario_info(attack_type_raw)
+
+  attack_type_data$n_weight <- coalesce_col(attack_type_data, c("n_examples", "total"))
+  attack_type_data$ifr <- coalesce_col(
+    attack_type_data,
+    c("injection_following_rate", "targeted_asr", "attack_success_rate", "attack_following_rate", "binary_asv")
+  )
+  attack_type_data$invalid_rate <- coalesce_col(
+    attack_type_data,
+    c("invalid_output_rate")
+  )
+  attack_type_data$robust_rate <- coalesce_col(
+    attack_type_data,
+    c("robust_accuracy", "correct_rate", "task_success_rate")
+  )
+
+  if ("eval_group" %in% names(attack_type_data)) {
+    attack_type_data <- attack_type_data |>
+      filter(eval_group != "clean")
+  } else if ("eval_split" %in% names(attack_type_data)) {
+    attack_type_data <- attack_type_data |>
+      filter(eval_split != "test_clean")
+  }
+
+  attack_type_heatmap <- attack_type_data |>
+    filter(!is.na(attack_type), !is.na(ifr)) |>
+    group_by(scenario_id, scenario_short, attack_type) |>
+    summarise(
+      injection_following_rate = weighted_rate(ifr, n_weight),
+      invalid_output_rate = weighted_rate(invalid_rate, n_weight),
+      robust_accuracy = weighted_rate(robust_rate, n_weight),
+      n_examples = sum(n_weight, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    sort_scenarios() |>
+    mutate(
+      scenario_short = ordered_scenario_short(as.character(scenario_short)),
+      attack_type_label = stringr::str_replace_all(attack_type, "_", " "),
+      attack_type_label = stringr::str_to_title(attack_type_label)
+    )
+
+  attack_type_levels <- attack_type_heatmap |>
+    group_by(attack_type_label) |>
+    summarise(order_value = mean(injection_following_rate, na.rm = TRUE), .groups = "drop") |>
+    arrange(desc(order_value)) |>
+    pull(attack_type_label)
+
+  attack_type_heatmap <- attack_type_heatmap |>
+    mutate(attack_type_label = factor(attack_type_label, levels = attack_type_levels))
+
+  attack_type_radar <- attack_type_heatmap |>
+    select(scenario_short, attack_type_label, injection_following_rate, robust_accuracy) |>
+    pivot_longer(
+      cols = c(injection_following_rate, robust_accuracy),
+      names_to = "metric",
+      values_to = "value"
+    ) |>
+    mutate(
+      metric_label = case_when(
+        metric == "injection_following_rate" ~ "Injection Following Rate",
+        metric == "robust_accuracy" ~ "Robust accuracy",
+        TRUE ~ metric
+      ),
+      metric_label = factor(
+        metric_label,
+        levels = c("Injection Following Rate", "Robust accuracy")
+      )
+    )
+}
+```
+
+# Figura 7 — Heatmap por tipo de ataque
+
+```{r fig-attack-type-heatmap, fig.width=11, fig.height=6.5}
+if (is.null(attack_type_heatmap)) {
+  cat("Nenhum arquivo de métricas por tipo de ataque foi encontrado. Figura pulada.")
+} else {
+  p_attack_type_heatmap <- attack_type_heatmap |>
+    ggplot(aes(x = attack_type_label, y = scenario_short, fill = injection_following_rate)) +
+    geom_tile(color = "white", linewidth = 0.4) +
+    geom_text(aes(label = scales::percent(injection_following_rate, accuracy = 0.1)), size = 3) +
+    scale_fill_gradientn(
+      colours = coolwarm_cols,
+      labels = pct_axis,
+      name = "IFR",
+      limits = c(0, 1)
+    ) +
+    labs(
+      title = "Injection Following Rate by attack type",
+      subtitle = "Células com cores mais quentes indicam maior seguimento da instrução adversarial.",
+      x = "Attack type",
+      y = NULL
+    ) +
+    base_theme() +
+    theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+  print(p_attack_type_heatmap)
+
+  save_figure(
+    p_attack_type_heatmap,
+    "07_attack_type_injection_following_heatmap.png",
+    "Figure 7 — Injection Following Rate by attack type",
+    "Heatmap of injection following rate by scenario and attack type.",
+    width = 11,
+    height = 6.5
+  )
+
+  readr::write_csv(
+    attack_type_heatmap,
+    file.path(MAIN_TABLES_DIR, "figures_attack_type_ifr_fraction.csv")
+  )
+}
+```
+
+# Figura 8 — Heatmap por tarefa
+
+```{r fig-task-error-heatmap, fig.width=11, fig.height=6.5}
+task_raw <- read_first_existing(c(
+  file.path(DESC_DIR, "11_metrics_by_task_recomputed.csv"),
+  file.path(DATA_DIR, "metrics", "full", "task_level_metrics.csv"),
+  file.path(DATA_DIR, "error_analysis", "full", "tables", "error_rates_by_task.csv")
+), required = FALSE)
+
+if (is.null(task_raw)) {
+  cat("Nenhum arquivo de métricas por tarefa foi encontrado. Figura pulada.")
+} else {
+  task_data <- add_scenario_info(task_raw)
+
+  task_data$n_weight <- coalesce_col(task_data, c("n_examples", "total"))
+  task_data$error_rate_metric <- coalesce_col(task_data, c("error_rate", "untargeted_asr"))
+  task_data$robust_metric <- coalesce_col(task_data, c("robust_accuracy", "correct_rate", "task_success_rate"))
+
+  task_data$error_rate_final <- dplyr::coalesce(task_data$error_rate_metric, 1 - task_data$robust_metric)
+
+  if ("eval_group" %in% names(task_data)) {
+    task_data <- task_data |>
+      filter(eval_group != "clean")
+  } else if ("eval_split" %in% names(task_data)) {
+    task_data <- task_data |>
+      filter(eval_split != "test_clean")
+  }
+
+  task_heatmap <- task_data |>
+    filter(!is.na(task_name), !is.na(error_rate_final)) |>
+    group_by(scenario_id, scenario_short, task_name) |>
+    summarise(
+      error_rate = weighted_rate(error_rate_final, n_weight),
+      n_examples = sum(n_weight, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    sort_scenarios() |>
+    mutate(
+      scenario_short = ordered_scenario_short(as.character(scenario_short)),
+      task_name = stringr::str_replace_all(task_name, "_", " "),
+      task_name = stringr::str_to_upper(task_name)
+    )
+
+  p_task_heatmap <- task_heatmap |>
+    ggplot(aes(x = task_name, y = scenario_short, fill = error_rate)) +
+    geom_tile(color = "white", linewidth = 0.4) +
+    geom_text(aes(label = scales::percent(error_rate, accuracy = 0.1)), size = 3) +
+    scale_fill_gradientn(
+      colours = coolwarm_cols,
+      labels = pct_axis,
+      name = "Error rate",
+      limits = c(0, 1)
+    ) +
+    labs(
+      title = "Task error rate under attack",
+      subtitle = "Células com cores mais quentes indicam maior erro na tarefa original sob ataque.",
+      x = "Task",
+      y = NULL
+    ) +
+    base_theme() +
+    theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+  print(p_task_heatmap)
+
+  save_figure(
+    p_task_heatmap,
+    "08_task_error_rate_under_attack_heatmap.png",
+    "Figure 8 — Task error rate under attack",
+    "Heatmap of error rate by scenario and task under attacked inputs.",
+    width = 11,
+    height = 6.5
+  )
+
+  readr::write_csv(
+    task_heatmap,
+    file.path(MAIN_TABLES_DIR, "figures_task_error_rate_fraction.csv")
+  )
+}
+```
+
+# Figura 9 — Taxonomia de falhas sob ataque
+
+```{r fig-failure-taxonomy, fig.width=10, fig.height=6}
+failure_raw <- read_first_existing(c(
+  file.path(DESC_DIR, "10_failure_taxonomy_recomputed.csv"),
+  file.path(DATA_DIR, "error_analysis", "full", "tables", "failure_taxonomy_by_scenario_seed_split.csv")
+), required = FALSE)
+
+if (is.null(failure_raw)) {
+  cat("Nenhum arquivo de taxonomia de falhas foi encontrado. Figura pulada.")
+} else {
+  failure_data <- add_scenario_info(failure_raw)
+
+  if ("eval_group" %in% names(failure_data)) {
+    failure_data <- failure_data |>
+      filter(eval_group != "clean")
+  } else if ("eval_split" %in% names(failure_data)) {
+    failure_data <- failure_data |>
+      filter(eval_split != "test_clean")
+  }
+
+  failure_summary <- failure_data |>
+    group_by(scenario_id, scenario_short, failure_type) |>
+    summarise(count = sum(count, na.rm = TRUE), .groups = "drop_last") |>
+    mutate(rate = count / sum(count, na.rm = TRUE)) |>
+    ungroup() |>
+    sort_scenarios() |>
+    mutate(
+      scenario_short = ordered_scenario_short(as.character(scenario_short)),
+      failure_type_label = case_when(
+        failure_type == "correct" ~ "Correct",
+        failure_type == "followed_attack" ~ "Followed attack",
+        failure_type == "invalid_output" ~ "Invalid output",
+        failure_type == "wrong_other" ~ "Wrong other",
+        TRUE ~ failure_type
+      ),
+      failure_type_label = factor(
+        failure_type_label,
+        levels = c("Correct", "Followed attack", "Wrong other", "Invalid output")
+      )
+    )
+
+  failure_fill <- c(
+    "Correct" = "#4daf4a",
+    "Followed attack" = "#e41a1c",
+    "Wrong other" = "#ff7f00",
+    "Invalid output" = "#377eb8"
+  )
+
+  p_failure_taxonomy <- failure_summary |>
+    ggplot(aes(x = scenario_short, y = rate, fill = failure_type_label)) +
+    geom_col(width = 0.72) +
+    scale_fill_manual(values = failure_fill, drop = FALSE) +
+    scale_y_continuous(labels = pct_axis) +
+    labs(
+      title = "Failure taxonomy under attack",
+      subtitle = "Nem todo erro é seguimento da injeção; esta decomposição separa os principais tipos de resultado.",
+      x = NULL,
+      y = "Share of attacked examples",
+      fill = NULL
+    ) +
+    base_theme()
+
+  print(p_failure_taxonomy)
+
+  save_figure(
+    p_failure_taxonomy,
+    "09_failure_taxonomy_under_attack.png",
+    "Figure 9 — Failure taxonomy under attack",
+    "Stacked bar chart decomposing attacked examples into correct, followed attack, wrong other and invalid output."
+  )
+
+  readr::write_csv(
+    failure_summary,
+    file.path(MAIN_TABLES_DIR, "figures_failure_taxonomy_under_attack_fraction.csv")
+  )
+}
+```
+
+# Figura 10 — Gráfico radial por tipo de ataque
+
+```{r fig-radial-attack-type, fig.width=14, fig.height=7}
+if (is.null(attack_type_radar)) {
+  cat("Nenhum arquivo de métricas por tipo de ataque foi encontrado. Figura pulada.")
+} else {
+  radar_levels <- levels(attack_type_heatmap$attack_type_label)
+  n_axes <- length(radar_levels)
+
+  radar_plot_data <- attack_type_radar |>
+    mutate(
+      attack_type_label = factor(attack_type_label, levels = radar_levels),
+      axis_id = as.integer(attack_type_label),
+      scenario_short = ordered_scenario_short(as.character(scenario_short))
+    ) |>
+    arrange(metric_label, scenario_short, axis_id) |>
+    group_by(metric_label, scenario_short) |>
+    group_modify(~ bind_rows(.x, .x |> slice(1) |> mutate(axis_id = n_axes + 1))) |>
+    ungroup()
+
+  p_radar_attack_type <- radar_plot_data |>
+    ggplot(aes(x = axis_id, y = value, color = scenario_short, group = scenario_short)) +
+    geom_hline(yintercept = c(0.25, 0.50, 0.75, 1.00), color = "grey85", linewidth = 0.35) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 1.8) +
+    facet_wrap(~ metric_label, ncol = 2) +
+    coord_polar() +
+    scale_color_manual(values = scenario_palette, drop = FALSE) +
+    scale_x_continuous(
+      breaks = seq_len(n_axes),
+      labels = radar_levels,
+      limits = c(1, n_axes + 1)
+    ) +
+    scale_y_continuous(
+      labels = pct_axis,
+      limits = c(0, 1)
+    ) +
+    labs(
+      title = "Attack-type radial comparison",
+      subtitle = "Comparação radial inspirada no gráfico de referência: à esquerda, Injection Following Rate; à direita, Robust accuracy.",
+      x = NULL,
+      y = NULL,
+      color = "Scenario"
+    ) +
+    base_theme() +
+    theme(
+      axis.text.y = element_blank(),
+      axis.ticks = element_blank(),
+      panel.grid.major.x = element_line(color = "grey88", linewidth = 0.3)
+    )
+
+  print(p_radar_attack_type)
+
+  save_figure(
+    p_radar_attack_type,
+    "10_attack_type_radial_comparison.png",
+    "Figure 10 — Attack-type radial comparison",
+    "Radial chart comparing robust accuracy and injection following rate across attack types.",
+    width = 14,
+    height = 7
+  )
+}
+```
+
+
+
+# Figura 11 — Scatterplot por tipo de ataque
+
+```{r fig-attack-type-scatter, fig.width=10.5, fig.height=7}
+if (is.null(attack_type_heatmap)) {
+  cat("Nenhum arquivo de métricas por tipo de ataque foi encontrado. Figura pulada.")
+} else {
+  p_attack_type_scatter <- attack_type_heatmap |>
+    ggplot(
+      aes(
+        x = robust_accuracy,
+        y = injection_following_rate,
+        color = scenario_short,
+        label = attack_type_label
+      )
+    ) +
+    geom_point(size = 3.6, alpha = 0.9) +
+    ggrepel::geom_text_repel(size = 3.1, show.legend = FALSE, seed = 42, max.overlaps = 30) +
+    facet_wrap(~ scenario_short) +
+    scale_color_manual(values = scenario_palette, drop = FALSE) +
+    scale_x_continuous(labels = pct_axis, limits = c(0, 1)) +
+    scale_y_continuous(labels = pct_axis, limits = c(0, 1)) +
+    labs(
+      title = "Attack-type scatterplot: Robust accuracy vs Injection Following Rate",
+      subtitle = "Dentro de cada cenário, o ideal é estar no canto inferior direito: alta robust accuracy e baixa Injection Following Rate.",
+      x = "Robust accuracy",
+      y = "Injection Following Rate",
+      color = "Scenario"
+    ) +
+    base_theme()
+
+  print(p_attack_type_scatter)
+
+  save_figure(
+    p_attack_type_scatter,
+    "11_attack_type_scatter_robust_vs_ifr.png",
+    "Figure 11 — Attack-type scatterplot",
+    "Scatterplot comparing robust accuracy and injection following rate across attack types within each scenario.",
+    width = 10.5,
+    height = 7
+  )
+}
+```
+
+
+# Figura 12 — Deltas contra C0
+
+Esta figura é uma das mais importantes para paper, porque mostra diretamente se cada cenário melhora ou piora em relação ao baseline C0. O eixo X mostra mudança de utilidade limpa; o eixo Y mostra mudança de robustez sob ataque.
+
+```{r fig-deltas-vs-c0, fig.width=9, fig.height=6}
+c0_clean <- scenario_summary |> filter(scenario_short == "C0") |> pull(clean_accuracy) |> first()
+c0_robust <- scenario_summary |> filter(scenario_short == "C0") |> pull(robust_accuracy_all_attacks) |> first()
+
+delta_plot_data <- scenario_summary |>
+  mutate(
+    clean_accuracy_delta_vs_c0 = clean_accuracy - c0_clean,
+    robust_accuracy_delta_vs_c0 = robust_accuracy_all_attacks - c0_robust
+  )
+
+p_delta_vs_c0 <- delta_plot_data |>
+  ggplot(aes(x = clean_accuracy_delta_vs_c0, y = robust_accuracy_delta_vs_c0, color = scenario_short)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey55") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey55") +
+  geom_point(size = 4.5) +
+  ggrepel::geom_label_repel(
+    aes(label = scenario_short, fill = scenario_short),
+    seed = 42,
+    color = "white",
+    show.legend = FALSE,
+    box.padding = 0.35
+  ) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = pct_axis) +
+  scale_y_continuous(labels = pct_axis) +
+  labs(
+    title = "Change relative to C0",
+    subtitle = "Cenários no quadrante superior direito melhoram simultaneamente utilidade limpa e robustez sob ataque.",
+    x = "Clean accuracy delta vs C0",
+    y = "Robust accuracy delta vs C0",
+    color = "Scenario"
+  ) +
+  base_theme()
+
+print(p_delta_vs_c0)
+
+save_figure(
+  p_delta_vs_c0,
+  "12_delta_vs_c0_clean_and_robust.png",
+  "Figure 12 — Change relative to C0",
+  "Scatterplot of clean accuracy and robust accuracy changes relative to the C0 baseline.",
+  width = 9,
+  height = 6
+)
+```
+
+# Figura 13 — Gap de generalização seen/unseen
+
+Esta figura mostra o quanto a taxa de seguimento da injeção muda quando saímos de ataques vistos para ataques não vistos.
+
+```{r fig-generalization-gap, fig.width=9, fig.height=5.5}
+generalization_gap <- scenario_summary |>
+  mutate(
+    ifr_gap_unseen_minus_seen = injection_following_rate_unseen - injection_following_rate_seen,
+    scenario_short = ordered_scenario_short(as.character(scenario_short))
+  )
+
+p_generalization_gap <- generalization_gap |>
+  ggplot(aes(x = scenario_short, y = ifr_gap_unseen_minus_seen, fill = scenario_short)) +
+  geom_hline(yintercept = 0, color = "grey55", linetype = "dashed") +
+  geom_col(width = 0.72) +
+  geom_text(
+    aes(label = scales::percent(ifr_gap_unseen_minus_seen, accuracy = 0.1)),
+    vjust = ifelse(generalization_gap$ifr_gap_unseen_minus_seen >= 0, -0.35, 1.2),
+    size = 3.6
+  ) +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = pct_axis) +
+  labs(
+    title = "Seen-unseen Injection Following Rate gap",
+    subtitle = "Valores positivos indicam maior seguimento da injeção em ataques não vistos.",
+    x = NULL,
+    y = "Unseen IFR − seen IFR",
+    fill = "Scenario"
+  ) +
+  base_theme()
+
+print(p_generalization_gap)
+
+save_figure(
+  p_generalization_gap,
+  "13_seen_unseen_ifr_gap.png",
+  "Figure 13 — Seen-unseen IFR gap",
+  "Bar chart showing the difference between unseen and seen injection following rate.",
+  width = 9,
+  height = 5.5
+)
+```
+
+# Figura 14 — MR targeted seen/unseen
+
+A métrica `MR targeted` é útil para conectar os exemplos atacados aos exemplos `injected-only`. Ela mede quando a saída no exemplo atacado e no exemplo injected-only seguem o alvo da injeção.
+
+```{r fig-mr-targeted, fig.width=10, fig.height=6}
+mr_raw <- read_first_existing(c(
+  file.path(DATA_DIR, "pairwise_metrics", "full", "mr_run_metrics.csv")
+), required = FALSE)
+
+if (is.null(mr_raw)) {
+  cat("Arquivo de MR não encontrado. Figura pulada.")
+} else {
+  mr_plot_data <- mr_raw |>
+    mutate(
+      scenario_short = make_scenario_short(scenario_id),
+      scenario_short = ordered_scenario_short(scenario_short),
+      attack_group = recode(
+        source_attacked_eval_split,
+        test_attacked_seen = "Seen attacks",
+        test_attacked_unseen = "Unseen attacks",
+        .default = source_attacked_eval_split
+      )
+    ) |>
+    group_by(scenario_id, scenario_short, attack_group) |>
+    summarise(
+      mr_targeted = weighted_rate(mr_targeted, n_examples),
+      n_examples = sum(n_examples, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    sort_scenarios()
+
+  p_mr_targeted <- mr_plot_data |>
+    ggplot(aes(x = mr_targeted, y = scenario_short, color = scenario_short)) +
+    geom_line(aes(group = scenario_short), linewidth = 0.8, alpha = 0.45, show.legend = FALSE) +
+    geom_point(aes(shape = attack_group), size = 3.4) +
+    scale_color_manual(values = scenario_palette, drop = FALSE) +
+    scale_x_continuous(labels = pct_axis, limits = c(0, 1)) +
+    labs(
+      title = "MR targeted across seen and unseen attacks",
+      subtitle = "Valores menores indicam menor correspondência targeted entre a resposta atacada e a resposta injected-only.",
+      x = "MR targeted",
+      y = NULL,
+      color = "Scenario",
+      shape = NULL
+    ) +
+    base_theme()
+
+  print(p_mr_targeted)
+
+  save_figure(
+    p_mr_targeted,
+    "14_mr_targeted_seen_unseen.png",
+    "Figure 14 — MR targeted seen/unseen",
+    "Dumbbell plot of targeted matching rate for seen and unseen attacks.",
+    width = 10,
+    height = 6
+  )
+}
+```
+
+# Figura 15 — PNA-I em exemplos injected-only
+
+Esta figura é diagnóstica: ela mostra quanto a instrução injetada, quando aparece isolada, leva o modelo ao alvo da injeção.
+
+```{r fig-pna-i, fig.width=10, fig.height=6}
+pna_i_raw <- read_first_existing(c(
+  file.path(DATA_DIR, "pairwise_metrics", "full", "pna_i_run_metrics.csv")
+), required = FALSE)
+
+if (is.null(pna_i_raw)) {
+  cat("Arquivo de PNA-I não encontrado. Figura pulada.")
+} else {
+  pna_i_plot_data <- pna_i_raw |>
+    mutate(
+      scenario_short = make_scenario_short(scenario_id),
+      scenario_short = ordered_scenario_short(scenario_short),
+      attack_group = case_when(
+        str_detect(eval_split, "seen") & !str_detect(eval_split, "unseen") ~ "Seen injected-only",
+        str_detect(eval_split, "unseen") ~ "Unseen injected-only",
+        TRUE ~ eval_split
+      )
+    ) |>
+    group_by(scenario_id, scenario_short, attack_group) |>
+    summarise(
+      pna_i = weighted_rate(pna_i, n_examples),
+      n_examples = sum(n_examples, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    sort_scenarios()
+
+  p_pna_i <- pna_i_plot_data |>
+    ggplot(aes(x = scenario_short, y = pna_i, fill = scenario_short)) +
+    geom_col(width = 0.72, position = position_dodge(width = 0.75)) +
+    facet_wrap(~ attack_group) +
+    scale_fill_manual(values = scenario_palette, drop = FALSE) +
+    scale_y_continuous(labels = pct_axis, limits = c(0, 1)) +
+    labs(
+      title = "PNA-I on injected-only examples",
+      subtitle = "Mede se a instrução adversarial isolada leva o modelo ao alvo da injeção.",
+      x = NULL,
+      y = "PNA-I",
+      fill = "Scenario"
+    ) +
+    base_theme()
+
+  print(p_pna_i)
+
+  save_figure(
+    p_pna_i,
+    "15_pna_i_injected_only.png",
+    "Figure 15 — PNA-I injected-only",
+    "Bar chart of PNA-I on injected-only examples.",
+    width = 10,
+    height = 6
+  )
+}
+```
+
+# Figura 16 — Adjusted win rate contra C0
+
+Esta figura usa o julgador pareado em exemplos limpos. O valor 0.5 representa empate ajustado com C0.
+
+```{r fig-adjusted-win-rate, fig.width=9, fig.height=5.5}
+win_rate_raw <- read_first_existing(c(
+  file.path(DATA_DIR, "pairwise_metrics", "full", "win_rate_metrics.csv")
+), required = FALSE)
+
+if (is.null(win_rate_raw)) {
+  cat("Arquivo de win rate não encontrado. Figura pulada.")
+} else {
+  win_rate_plot_data <- win_rate_raw |>
+    filter(eval_split == "test_clean") |>
+    mutate(
+      scenario_id = defended_scenario_id,
+      scenario_short = make_scenario_short(defended_scenario_id),
+      scenario_short = ordered_scenario_short(scenario_short)
+    ) |>
+    group_by(scenario_id, scenario_short) |>
+    summarise(
+      adjusted_win_rate = weighted_rate(adjusted_win_rate, valid_judgments),
+      win_rate = weighted_rate(win_rate, valid_judgments),
+      loss_rate = weighted_rate(loss_rate, valid_judgments),
+      tie_rate = weighted_rate(tie_rate, valid_judgments),
+      valid_judgments = sum(valid_judgments, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    sort_scenarios()
+
+  p_adjusted_win_rate <- win_rate_plot_data |>
+    ggplot(aes(x = scenario_short, y = adjusted_win_rate, fill = scenario_short)) +
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey55") +
+    geom_col(width = 0.72) +
+    geom_text(
+      aes(label = scales::percent(adjusted_win_rate, accuracy = 0.1)),
+      vjust = -0.35,
+      size = 3.6
+    ) +
+    scale_fill_manual(values = scenario_palette, drop = FALSE) +
+    scale_y_continuous(labels = pct_axis, limits = c(0, 1), expand = expansion(mult = c(0, 0.08))) +
+    labs(
+      title = "Adjusted win rate on clean examples vs C0",
+      subtitle = "A linha tracejada em 50% representa empate ajustado com o baseline C0.",
+      x = NULL,
+      y = "Adjusted win rate",
+      fill = "Scenario"
+    ) +
+    base_theme()
+
+  print(p_adjusted_win_rate)
+
+  save_figure(
+    p_adjusted_win_rate,
+    "16_adjusted_win_rate_clean_vs_c0.png",
+    "Figure 16 — Adjusted win rate vs C0",
+    "Bar chart of adjusted win rate against C0 on clean examples.",
+    width = 9,
+    height = 5.5
+  )
+}
+```
+
+# Painel principal
+
+```{r fig-main-panel, fig.width=12, fig.height=10}
+p_panel_a <- p_clean_vs_ifr + labs(title = "A. Utility vs injection following")
+p_panel_b <- p_clean_vs_robust + labs(title = "B. Utility vs robustness")
+p_panel_c <- p_seen_unseen_ifr + labs(title = "C. Seen vs unseen IFR")
+p_panel_d <- p_invalid + labs(title = "D. Invalid output rate")
+
+p_main_panel <- (p_panel_a | p_panel_b) / (p_panel_c | p_panel_d) +
+  plot_annotation(
+    title = "RPC-PI main results panel",
+    subtitle = "Resumo visual da utilidade limpa, robustez, seguimento da injeção e validade das saídas."
+  )
+
+print(p_main_panel)
+
+save_figure(
+  p_main_panel,
+  "00_main_results_panel.png",
+  "Figure 0 — Main results panel",
+  "Combined panel with the four most important result views.",
+  width = 12,
+  height = 10
+)
+```
+
+# Índice das figuras geradas
+
+```{r figure-index}
+readr::write_csv(
+  figure_index,
+  file.path(MAIN_TABLES_DIR, "figures_index.csv")
+)
+
+figure_index |>
+  knitr::kable(
+    caption = "Índice das figuras exportadas por este Rmd."
+  )
+```
+
+# Ordem sugerida no relatório
+
+A ordem sugerida para o relatório/artigo é:
+
+1. `00_main_results_panel.png`, para uma visão geral;
+2. `01_clean_accuracy_vs_injection_following_rate.png`, como gráfico principal de trade-off;
+3. `12_delta_vs_c0_clean_and_robust.png`, para destacar ganhos relativos ao baseline;
+4. `02_clean_accuracy_vs_robust_accuracy.png`, para destacar robustez;
+5. `04_seen_vs_unseen_injection_following_rate.png`, para discutir generalização;
+6. `13_seen_unseen_ifr_gap.png`, para resumir o gap seen/unseen;
+7. `07_attack_type_injection_following_heatmap.png`, para padrões por tipo de ataque;
+8. `10_attack_type_radial_comparison.png`, como visual complementar inspirado no exemplo radial;
+9. `11_attack_type_scatter_robust_vs_ifr.png`, para o trade-off por tipo de ataque dentro de cada cenário;
+10. `09_failure_taxonomy_under_attack.png`, para decompor erro em acerto, ataque seguido, outro erro e saída inválida;
+11. `14_mr_targeted_seen_unseen.png`, `15_pna_i_injected_only.png` e `16_adjusted_win_rate_clean_vs_c0.png`, como figuras suplementares/metodológicas.

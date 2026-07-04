@@ -1,0 +1,1655 @@
+---
+title: "RPC-PI Experiment - Accuracy and Task Utility Analysis"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6,
+  dpi = 300
+)
+
+options(knitr.kable.NA = "-")
+
+required_packages <- c(
+  "tidyverse",
+  "readr",
+  "ggplot2",
+  "scales",
+  "stringr",
+  "forcats",
+  "fs",
+  "here",
+  "knitr"
+)
+
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(scales)
+library(stringr)
+library(forcats)
+library(fs)
+library(here)
+library(knitr)
+```
+
+# Objective
+
+This R Markdown focuses on **accuracy and task utility**.
+
+It is different from ASV and Win Rate:
+
+- ASV measures whether the attack reached the adversarial target;
+- Win Rate measures judged preference against C0;
+- Accuracy measures whether the model preserved the original task objective.
+
+At the example level:
+
+```text
+task_success = normalized_output == expected_answer
+```
+
+In clean examples, this becomes:
+
+```text
+clean_accuracy = mean(task_success)
+```
+
+In attacked examples, this becomes:
+
+```text
+robust_accuracy = mean(task_success)
+```
+
+This report analyzes:
+
+- clean accuracy;
+- robust accuracy;
+- task success rate across splits;
+- seen vs unseen robust accuracy;
+- accuracy by task;
+- accuracy by attack type;
+- utility drop vs C0;
+- robust accuracy delta vs C0;
+- paired clean improvements/regressions against C0;
+- paired robust wins against C0;
+- accuracy and ASV trade-off.
+
+Higher accuracy is better.
+
+# Paths and configuration
+
+```{r paths}
+DATA_DIR <- here::here("data", "results")
+DESC_DIR <- here::here("tables", "descriptive")
+ERROR_TABLE_DIR <- file.path(DATA_DIR, "error_analysis", "full", "tables")
+
+OUT_TABLE_DIR <- here::here("tables", "accuracy_analysis")
+OUT_FIG_DIR <- here::here("figures", "accuracy_analysis")
+
+fs::dir_create(OUT_TABLE_DIR)
+fs::dir_create(OUT_FIG_DIR)
+
+if (!dir.exists(DATA_DIR)) {
+  stop(
+    "Could not find data/results/. Extract the ZIP first with: ",
+    "unzip('results.zip', exdir = 'data')"
+  )
+}
+```
+
+# Helper functions
+
+```{r helpers}
+read_first_existing <- function(paths, required = TRUE) {
+  existing <- paths[file.exists(paths)]
+
+  if (length(existing) == 0) {
+    if (required) {
+      stop("None of these files were found:\n", paste(paths, collapse = "\n"))
+    }
+    return(NULL)
+  }
+
+  readr::read_csv(existing[[1]], show_col_types = FALSE)
+}
+
+coalesce_col <- function(df, cols, default = NA_real_) {
+  existing <- cols[cols %in% names(df)]
+
+  if (length(existing) == 0) {
+    return(rep(default, nrow(df)))
+  }
+
+  out <- df[[existing[[1]]]]
+
+  if (length(existing) > 1) {
+    for (nm in existing[-1]) {
+      out <- dplyr::coalesce(out, df[[nm]])
+    }
+  }
+
+  out
+}
+
+scenario_order <- c(
+  "c0_base",
+  "c1_struq_format_only",
+  "c2_struq_sft",
+  "c3_secalign_dpo",
+  "c4_ih_sft"
+)
+
+scenario_labels <- tibble(
+  scenario_id = scenario_order,
+  scenario_short = c("C0", "C1", "C2", "C3", "C4"),
+  scenario_label = c(
+    "C0 - Base model",
+    "C1 - StruQ format-only",
+    "C2 - StruQ-like SFT",
+    "C3 - SecAlign-like DPO",
+    "C4 - Instruction-Hierarchy-like SFT"
+  )
+)
+
+scenario_palette <- c(
+  C0 = "#7F7F7F",
+  C1 = "#D55E00",
+  C2 = "#0072B2",
+  C3 = "#CC79A7",
+  C4 = "#009E73"
+)
+
+sort_scenarios <- function(df) {
+  df |>
+    mutate(
+      scenario_id = factor(as.character(scenario_id), levels = scenario_order),
+      scenario_short = factor(as.character(scenario_short), levels = c("C0", "C1", "C2", "C3", "C4"))
+    ) |>
+    arrange(scenario_id)
+}
+
+add_scenario_info <- function(df) {
+  out <- df |>
+    mutate(scenario_id = as.character(scenario_id)) |>
+    left_join(scenario_labels, by = "scenario_id", suffix = c("", "_lookup"))
+
+  if (!("scenario_label" %in% names(out))) {
+    out$scenario_label <- out$scenario_id
+  }
+
+  if ("scenario_label_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_label = coalesce(
+          as.character(scenario_label),
+          as.character(scenario_label_lookup)
+        )
+      )
+  }
+
+  if (!("scenario_short" %in% names(out))) {
+    out$scenario_short <- NA_character_
+  }
+
+  if ("scenario_short_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_short = coalesce(
+          as.character(scenario_short),
+          as.character(scenario_short_lookup)
+        )
+      )
+  }
+
+  out |>
+    mutate(
+      scenario_short = ifelse(
+        is.na(scenario_short),
+        recode(
+          as.character(scenario_id),
+          c0_base = "C0",
+          c1_struq_format_only = "C1",
+          c2_struq_sft = "C2",
+          c3_secalign_dpo = "C3",
+          c4_ih_sft = "C4",
+          .default = as.character(scenario_id)
+        ),
+        scenario_short
+      )
+    ) |>
+    select(-any_of(c("scenario_label_lookup", "scenario_short_lookup"))) |>
+    sort_scenarios()
+}
+
+to_logical_safe <- function(x) {
+  if (is.logical(x)) return(x)
+
+  x_chr <- tolower(as.character(x))
+
+  case_when(
+    x_chr %in% c("true", "t", "1", "yes") ~ TRUE,
+    x_chr %in% c("false", "f", "0", "no") ~ FALSE,
+    TRUE ~ NA
+  )
+}
+
+safe_mean <- function(x) {
+  if (sum(!is.na(x)) == 0) return(NA_real_)
+  mean(x, na.rm = TRUE)
+}
+
+safe_sd <- function(x) {
+  if (sum(!is.na(x)) <= 1) return(NA_real_)
+  sd(x, na.rm = TRUE)
+}
+
+safe_sem <- function(x) {
+  n <- sum(!is.na(x))
+  if (n <= 1) return(NA_real_)
+  sd(x, na.rm = TRUE) / sqrt(n)
+}
+
+safe_tcrit <- function(n, confidence = 0.95) {
+  if (is.na(n) || n <= 1) return(NA_real_)
+  alpha <- 1 - confidence
+  qt(1 - alpha / 2, df = n - 1)
+}
+
+wilson_ci <- function(k, n, conf.level = 0.95) {
+  if (is.na(k) || is.na(n) || n <= 0) {
+    return(tibble(estimate = NA_real_, ci_low = NA_real_, ci_high = NA_real_))
+  }
+
+  z <- qnorm(1 - (1 - conf.level) / 2)
+  p <- k / n
+  denom <- 1 + z^2 / n
+  center <- (p + z^2 / (2 * n)) / denom
+  half_width <- z * sqrt((p * (1 - p) / n) + (z^2 / (4 * n^2))) / denom
+
+  tibble(
+    estimate = p,
+    ci_low = max(0, center - half_width),
+    ci_high = min(1, center + half_width)
+  )
+}
+
+safe_binom_p <- function(x, n, p = 0.5, alternative = "greater") {
+  if (is.na(x) || is.na(n) || n <= 0 || x < 0 || x > n) {
+    return(NA_real_)
+  }
+
+  tryCatch(
+    binom.test(as.integer(x), as.integer(n), p = p, alternative = alternative)$p.value,
+    error = function(e) NA_real_
+  )
+}
+
+bootstrap_stratified_mean <- function(values, strata, B = 500) {
+  values <- as.numeric(values)
+  strata <- as.character(strata)
+
+  valid <- !is.na(values) & !is.na(strata)
+
+  values <- values[valid]
+  strata <- strata[valid]
+
+  if (length(values) == 0) {
+    return(rep(NA_real_, B))
+  }
+
+  split_values <- split(values, strata)
+
+  replicate(
+    B,
+    {
+      sampled <- unlist(
+        lapply(
+          split_values,
+          function(x) {
+            sample(x, size = length(x), replace = TRUE)
+          }
+        ),
+        use.names = FALSE
+      )
+
+      mean(sampled, na.rm = TRUE)
+    }
+  )
+}
+
+summarise_bootstrap <- function(values, strata, B = 500) {
+  boot <- bootstrap_stratified_mean(values, strata, B = B)
+
+  tibble(
+    estimate = mean(values, na.rm = TRUE),
+    ci_low = as.numeric(quantile(boot, 0.025, na.rm = TRUE)),
+    ci_high = as.numeric(quantile(boot, 0.975, na.rm = TRUE))
+  )
+}
+
+fmt_pct <- function(x, accuracy = 0.1) {
+  scales::percent(x, accuracy = accuracy)
+}
+
+base_theme <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      legend.position = "bottom",
+      plot.title.position = "plot",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey30"),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(face = "bold")
+    )
+}
+
+write_acc_csv <- function(df, filename) {
+  readr::write_csv(df, file.path(OUT_TABLE_DIR, filename))
+  invisible(df)
+}
+
+save_acc_figure <- function(plot, filename, width = 10, height = 6) {
+  ggsave(
+    file.path(OUT_FIG_DIR, filename),
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = 320,
+    bg = "white"
+  )
+  invisible(plot)
+}
+```
+
+# Load inference examples
+
+```{r load-inference}
+inference <- read_first_existing(c(
+  file.path(DESC_DIR, "01_inference_compact.csv")
+)) |>
+  add_scenario_info()
+
+if (!("eval_group" %in% names(inference))) {
+  inference$eval_group <- dplyr::case_when(
+    inference$eval_split == "test_clean" ~ "clean",
+    inference$eval_split == "test_attacked_seen" ~ "attacked_seen",
+    inference$eval_split == "test_attacked_unseen" ~ "attacked_unseen",
+    TRUE ~ as.character(inference$eval_split)
+  )
+}
+
+if (!("attack_type" %in% names(inference))) {
+  inference$attack_type <- NA_character_
+}
+
+if (!("is_correct_flag" %in% names(inference))) {
+  if (all(c("normalized_output", "expected_answer") %in% names(inference))) {
+    inference$is_correct_flag <- inference$normalized_output == inference$expected_answer
+  } else {
+    stop("Could not find is_correct_flag or normalized_output/expected_answer to compute accuracy.")
+  }
+}
+
+if (!("followed_attack_flag" %in% names(inference))) {
+  if (all(c("normalized_output", "attack_target") %in% names(inference))) {
+    inference$followed_attack_flag <- inference$normalized_output == inference$attack_target
+  } else {
+    inference$followed_attack_flag <- NA
+  }
+}
+
+if (!("invalid_output_flag" %in% names(inference))) {
+  inference$invalid_output_flag <- NA
+}
+
+examples <- inference |>
+  mutate(
+    seed = as.integer(seed),
+    eval_split = as.character(eval_split),
+    eval_group = as.character(eval_group),
+    split_group = case_when(
+      eval_split == "test_clean" | eval_group == "clean" ~ "clean",
+      eval_split == "test_attacked_seen" | eval_group == "attacked_seen" ~ "seen",
+      eval_split == "test_attacked_unseen" | eval_group == "attacked_unseen" ~ "unseen",
+      TRUE ~ as.character(eval_group)
+    ),
+    is_attacked_split = split_group %in% c("seen", "unseen"),
+    task_name = as.character(task_name),
+    attack_type = ifelse(is.na(attack_type) | attack_type == "", "clean", as.character(attack_type)),
+    is_correct_flag = to_logical_safe(is_correct_flag),
+    followed_attack_flag = to_logical_safe(followed_attack_flag),
+    invalid_output_flag = to_logical_safe(invalid_output_flag),
+    task_success = is_correct_flag,
+    task_success_int = as.integer(task_success),
+    asv = followed_attack_flag,
+    asv_int = as.integer(asv),
+    invalid_output_int = as.integer(invalid_output_flag)
+  ) |>
+  filter(!is.na(task_success))
+
+write_acc_csv(
+  examples |>
+    select(
+      scenario_id,
+      scenario_short,
+      seed,
+      eval_split,
+      split_group,
+      example_id,
+      task_name,
+      attack_type,
+      expected_answer,
+      attack_target,
+      normalized_output,
+      task_success,
+      asv,
+      invalid_output_flag
+    ),
+  "01_examples_with_task_success.csv"
+)
+
+examples |>
+  count(scenario_short, seed, split_group, name = "n_examples") |>
+  knitr::kable(
+    caption = "Table 1 - Examples used in accuracy analysis."
+  )
+```
+
+# Accuracy by seed and split
+
+```{r accuracy-by-seed-split}
+accuracy_by_seed_split <- examples |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    seed,
+    eval_split,
+    split_group
+  ) |>
+  summarise(
+    n = n(),
+    correct = sum(task_success_int, na.rm = TRUE),
+    task_success_rate = correct / n,
+    asv_successes = sum(asv_int, na.rm = TRUE),
+    asv_rate = if_else(is_attacked_split[1], asv_successes / n, NA_real_),
+    invalid_outputs = sum(invalid_output_int, na.rm = TRUE),
+    invalid_output_rate = safe_mean(invalid_output_int),
+    .groups = "drop"
+  ) |>
+  rowwise() |>
+  mutate(
+    wilson = list(wilson_ci(correct, n, conf.level = 0.95))
+  ) |>
+  unnest(wilson) |>
+  ungroup() |>
+  rename(
+    accuracy_wilson = estimate,
+    accuracy_ci_low = ci_low,
+    accuracy_ci_high = ci_high
+  ) |>
+  mutate(
+    metric_name = case_when(
+      split_group == "clean" ~ "clean_accuracy",
+      split_group %in% c("seen", "unseen") ~ "robust_accuracy",
+      TRUE ~ "task_success_rate"
+    )
+  ) |>
+  sort_scenarios()
+
+accuracy_all_attacks_seed <- examples |>
+  filter(is_attacked_split) |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    seed
+  ) |>
+  summarise(
+    eval_split = "all_attacks",
+    split_group = "all_attacks",
+    n = n(),
+    correct = sum(task_success_int, na.rm = TRUE),
+    task_success_rate = correct / n,
+    asv_successes = sum(asv_int, na.rm = TRUE),
+    asv_rate = asv_successes / n,
+    invalid_outputs = sum(invalid_output_int, na.rm = TRUE),
+    invalid_output_rate = safe_mean(invalid_output_int),
+    .groups = "drop"
+  ) |>
+  rowwise() |>
+  mutate(
+    wilson = list(wilson_ci(correct, n, conf.level = 0.95))
+  ) |>
+  unnest(wilson) |>
+  ungroup() |>
+  rename(
+    accuracy_wilson = estimate,
+    accuracy_ci_low = ci_low,
+    accuracy_ci_high = ci_high
+  ) |>
+  mutate(metric_name = "robust_accuracy_all_attacks") |>
+  sort_scenarios()
+
+accuracy_seed_summary <- bind_rows(accuracy_by_seed_split, accuracy_all_attacks_seed) |>
+  mutate(
+    split_group = factor(split_group, levels = c("clean", "seen", "unseen", "all_attacks"))
+  ) |>
+  sort_scenarios()
+
+write_acc_csv(accuracy_seed_summary, "02_accuracy_by_seed_split_fraction.csv")
+
+accuracy_seed_summary |>
+  select(
+    scenario_short,
+    seed,
+    split_group,
+    n,
+    correct,
+    task_success_rate,
+    accuracy_ci_low,
+    accuracy_ci_high,
+    asv_rate,
+    invalid_output_rate
+  ) |>
+  mutate(
+    across(
+      c(task_success_rate, accuracy_ci_low, accuracy_ci_high, asv_rate, invalid_output_rate),
+      ~ fmt_pct(.x)
+    )
+  ) |>
+  knitr::kable(
+    caption = "Table 2 - Accuracy by seed and split with Wilson intervals."
+  )
+```
+
+# Scenario-level accuracy and utility summary
+
+```{r scenario-summary}
+accuracy_scenario_summary <- accuracy_seed_summary |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    split_group
+  ) |>
+  summarise(
+    n_seeds = n_distinct(seed),
+    seeds = paste(sort(unique(seed)), collapse = ", "),
+    total_examples = sum(n, na.rm = TRUE),
+    total_correct = sum(correct, na.rm = TRUE),
+    weighted_accuracy = total_correct / total_examples,
+    mean_accuracy = mean(task_success_rate, na.rm = TRUE),
+    sd_accuracy = safe_sd(task_success_rate),
+    sem_accuracy = safe_sem(task_success_rate),
+    tcrit_95 = safe_tcrit(n_distinct(seed)),
+    seed_ci_low = mean_accuracy - tcrit_95 * sem_accuracy,
+    seed_ci_high = mean_accuracy + tcrit_95 * sem_accuracy,
+    total_asv_successes = sum(asv_successes, na.rm = TRUE),
+    weighted_asv_rate = if_else(
+      first(as.character(split_group)) == "clean",
+      NA_real_,
+      total_asv_successes / total_examples
+    ),
+    weighted_invalid_output_rate = if_else(
+      sum(n, na.rm = TRUE) > 0,
+      sum(invalid_outputs, na.rm = TRUE) / sum(n, na.rm = TRUE),
+      NA_real_
+    ),
+    .groups = "drop"
+  ) |>
+  rowwise() |>
+  mutate(
+    wilson = list(wilson_ci(total_correct, total_examples, conf.level = 0.95))
+  ) |>
+  unnest(wilson) |>
+  ungroup() |>
+  rename(
+    weighted_accuracy_wilson = estimate,
+    weighted_accuracy_ci_low = ci_low,
+    weighted_accuracy_ci_high = ci_high
+  ) |>
+  group_by(split_group) |>
+  mutate(
+    c0_accuracy = weighted_accuracy[scenario_id == "c0_base"][1],
+    accuracy_delta_vs_c0 = weighted_accuracy - c0_accuracy,
+    utility_drop_vs_c0 = c0_accuracy - weighted_accuracy,
+    relative_accuracy_vs_c0 = if_else(
+      !is.na(c0_accuracy) & c0_accuracy > 0,
+      weighted_accuracy / c0_accuracy,
+      NA_real_
+    )
+  ) |>
+  ungroup() |>
+  sort_scenarios()
+
+write_acc_csv(accuracy_scenario_summary, "03_accuracy_scenario_summary_fraction.csv")
+
+accuracy_scenario_summary |>
+  filter(split_group %in% c("clean", "all_attacks")) |>
+  select(
+    scenario_short,
+    split_group,
+    n_seeds,
+    total_examples,
+    total_correct,
+    weighted_accuracy,
+    weighted_accuracy_ci_low,
+    weighted_accuracy_ci_high,
+    accuracy_delta_vs_c0,
+    utility_drop_vs_c0,
+    relative_accuracy_vs_c0,
+    weighted_asv_rate
+  ) |>
+  mutate(
+    across(
+      c(
+        weighted_accuracy,
+        weighted_accuracy_ci_low,
+        weighted_accuracy_ci_high,
+        accuracy_delta_vs_c0,
+        utility_drop_vs_c0,
+        relative_accuracy_vs_c0,
+        weighted_asv_rate
+      ),
+      ~ fmt_pct(.x)
+    )
+  ) |>
+  knitr::kable(
+    caption = "Table 3 - Scenario-level clean and robust accuracy summary."
+  )
+```
+
+# Clean utility vs robust utility
+
+```{r clean-vs-robust-table}
+clean_robust_summary <- accuracy_scenario_summary |>
+  filter(split_group %in% c("clean", "all_attacks")) |>
+  select(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    split_group,
+    weighted_accuracy,
+    weighted_accuracy_ci_low,
+    weighted_accuracy_ci_high,
+    accuracy_delta_vs_c0,
+    utility_drop_vs_c0,
+    relative_accuracy_vs_c0,
+    weighted_asv_rate
+  ) |>
+  pivot_wider(
+    names_from = split_group,
+    values_from = c(
+      weighted_accuracy,
+      weighted_accuracy_ci_low,
+      weighted_accuracy_ci_high,
+      accuracy_delta_vs_c0,
+      utility_drop_vs_c0,
+      relative_accuracy_vs_c0,
+      weighted_asv_rate
+    )
+  ) |>
+  mutate(
+    robust_minus_clean_accuracy = weighted_accuracy_all_attacks - weighted_accuracy_clean,
+    robust_retention = if_else(
+      !is.na(weighted_accuracy_clean) & weighted_accuracy_clean > 0,
+      weighted_accuracy_all_attacks / weighted_accuracy_clean,
+      NA_real_
+    )
+  ) |>
+  sort_scenarios()
+
+write_acc_csv(clean_robust_summary, "04_clean_vs_robust_utility_summary.csv")
+
+clean_robust_summary |>
+  select(
+    scenario_short,
+    weighted_accuracy_clean,
+    accuracy_delta_vs_c0_clean,
+    utility_drop_vs_c0_clean,
+    weighted_accuracy_all_attacks,
+    accuracy_delta_vs_c0_all_attacks,
+    utility_drop_vs_c0_all_attacks,
+    robust_minus_clean_accuracy,
+    robust_retention,
+    weighted_asv_rate_all_attacks
+  ) |>
+  mutate(across(where(is.numeric), ~ fmt_pct(.x))) |>
+  knitr::kable(
+    caption = "Table 4 - Clean utility vs robust utility."
+  )
+```
+
+# Accuracy by task
+
+```{r by-task}
+accuracy_by_task <- examples |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    split_group,
+    task_name
+  ) |>
+  summarise(
+    n = n(),
+    correct = sum(task_success_int, na.rm = TRUE),
+    accuracy = correct / n,
+    asv_rate = if_else(
+      split_group[1] == "clean",
+      NA_real_,
+      sum(asv_int, na.rm = TRUE) / n
+    ),
+    .groups = "drop"
+  ) |>
+  rowwise() |>
+  mutate(wilson = list(wilson_ci(correct, n, conf.level = 0.95))) |>
+  unnest(wilson) |>
+  ungroup() |>
+  rename(
+    accuracy_wilson = estimate,
+    accuracy_ci_low = ci_low,
+    accuracy_ci_high = ci_high
+  ) |>
+  group_by(split_group, task_name) |>
+  mutate(
+    c0_accuracy = accuracy[scenario_id == "c0_base"][1],
+    accuracy_delta_vs_c0 = accuracy - c0_accuracy
+  ) |>
+  ungroup() |>
+  sort_scenarios()
+
+accuracy_by_task_all_attacks <- examples |>
+  filter(is_attacked_split) |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    task_name
+  ) |>
+  summarise(
+    split_group = "all_attacks",
+    n = n(),
+    correct = sum(task_success_int, na.rm = TRUE),
+    accuracy = correct / n,
+    asv_rate = sum(asv_int, na.rm = TRUE) / n,
+    .groups = "drop"
+  ) |>
+  rowwise() |>
+  mutate(wilson = list(wilson_ci(correct, n, conf.level = 0.95))) |>
+  unnest(wilson) |>
+  ungroup() |>
+  rename(
+    accuracy_wilson = estimate,
+    accuracy_ci_low = ci_low,
+    accuracy_ci_high = ci_high
+  ) |>
+  group_by(split_group, task_name) |>
+  mutate(
+    c0_accuracy = accuracy[scenario_id == "c0_base"][1],
+    accuracy_delta_vs_c0 = accuracy - c0_accuracy
+  ) |>
+  ungroup() |>
+  sort_scenarios()
+
+accuracy_by_task_full <- bind_rows(accuracy_by_task, accuracy_by_task_all_attacks)
+
+write_acc_csv(accuracy_by_task_full, "05_accuracy_by_task_fraction.csv")
+
+accuracy_by_task_full |>
+  filter(split_group %in% c("clean", "all_attacks")) |>
+  select(
+    scenario_short,
+    split_group,
+    task_name,
+    n,
+    correct,
+    accuracy,
+    accuracy_ci_low,
+    accuracy_ci_high,
+    accuracy_delta_vs_c0,
+    asv_rate
+  ) |>
+  mutate(
+    across(c(accuracy, accuracy_ci_low, accuracy_ci_high, accuracy_delta_vs_c0, asv_rate), ~ fmt_pct(.x))
+  ) |>
+  knitr::kable(
+    caption = "Table 5 - Accuracy by task."
+  )
+```
+
+# Accuracy by attack type
+
+```{r by-attack-type}
+accuracy_by_attack_type <- examples |>
+  filter(is_attacked_split) |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    attack_type
+  ) |>
+  summarise(
+    n = n(),
+    correct = sum(task_success_int, na.rm = TRUE),
+    robust_accuracy = correct / n,
+    asv_rate = sum(asv_int, na.rm = TRUE) / n,
+    invalid_output_rate = safe_mean(invalid_output_int),
+    .groups = "drop"
+  ) |>
+  rowwise() |>
+  mutate(wilson = list(wilson_ci(correct, n, conf.level = 0.95))) |>
+  unnest(wilson) |>
+  ungroup() |>
+  rename(
+    robust_accuracy_wilson = estimate,
+    robust_accuracy_ci_low = ci_low,
+    robust_accuracy_ci_high = ci_high
+  ) |>
+  group_by(attack_type) |>
+  mutate(
+    c0_robust_accuracy = robust_accuracy[scenario_id == "c0_base"][1],
+    robust_accuracy_delta_vs_c0 = robust_accuracy - c0_robust_accuracy
+  ) |>
+  ungroup() |>
+  sort_scenarios()
+
+write_acc_csv(accuracy_by_attack_type, "06_accuracy_by_attack_type_fraction.csv")
+
+accuracy_by_attack_type |>
+  select(
+    scenario_short,
+    attack_type,
+    n,
+    correct,
+    robust_accuracy,
+    robust_accuracy_ci_low,
+    robust_accuracy_ci_high,
+    robust_accuracy_delta_vs_c0,
+    asv_rate,
+    invalid_output_rate
+  ) |>
+  mutate(
+    across(
+      c(
+        robust_accuracy,
+        robust_accuracy_ci_low,
+        robust_accuracy_ci_high,
+        robust_accuracy_delta_vs_c0,
+        asv_rate,
+        invalid_output_rate
+      ),
+      ~ fmt_pct(.x)
+    )
+  ) |>
+  knitr::kable(
+    caption = "Table 6 - Robust accuracy by attack type."
+  )
+```
+
+# Paired accuracy comparison against C0
+
+This section uses `paired_vs_c0_rows.csv`. It compares the defended scenario and C0 on the same example.
+
+For accuracy, positive delta means improvement:
+
+```text
+accuracy delta vs C0 = defended_correct - C0_correct
+```
+
+```{r load-paired}
+paired_rows_path <- file.path(ERROR_TABLE_DIR, "paired_vs_c0_rows.csv")
+
+if (!file.exists(paired_rows_path)) {
+  paired_accuracy <- NULL
+  cat("paired_vs_c0_rows.csv not found. Paired accuracy sections will be skipped.")
+} else {
+  paired_rows <- readr::read_csv(
+    paired_rows_path,
+    show_col_types = FALSE,
+    col_select = any_of(c(
+      "scenario_id",
+      "scenario_label",
+      "seed",
+      "eval_split",
+      "example_id",
+      "example_key",
+      "base_id",
+      "task_name",
+      "attack_type",
+      "is_correct",
+      "reference_is_correct",
+      "followed_attack",
+      "reference_followed_attack"
+    ))
+  ) |>
+    add_scenario_info() |>
+    mutate(
+      seed = as.integer(seed),
+      eval_split = as.character(eval_split),
+      task_name = as.character(task_name),
+      attack_type = ifelse(is.na(attack_type) | attack_type == "", "clean", as.character(attack_type)),
+      is_correct = to_logical_safe(is_correct),
+      reference_is_correct = to_logical_safe(reference_is_correct),
+      followed_attack = to_logical_safe(followed_attack),
+      reference_followed_attack = to_logical_safe(reference_followed_attack),
+      split_group = case_when(
+        eval_split == "test_clean" ~ "clean",
+        eval_split == "test_attacked_seen" ~ "seen",
+        eval_split == "test_attacked_unseen" ~ "unseen",
+        TRUE ~ eval_split
+      ),
+      is_attacked_split = split_group %in% c("seen", "unseen")
+    ) |>
+    filter(!is.na(is_correct), !is.na(reference_is_correct))
+
+  paired_accuracy <- paired_rows |>
+    mutate(
+      defended_correct = as.integer(is_correct),
+      c0_correct = as.integer(reference_is_correct),
+      accuracy_delta_vs_c0 = defended_correct - c0_correct,
+      defense_better = defended_correct == 1 & c0_correct == 0,
+      defense_worse = defended_correct == 0 & c0_correct == 1,
+      same_outcome = defended_correct == c0_correct,
+      stratum = paste(seed, eval_split, task_name, attack_type, sep = "__")
+    )
+
+  write_acc_csv(paired_accuracy, "07_paired_accuracy_rows_vs_c0.csv")
+
+  paired_accuracy |>
+    count(scenario_short, seed, split_group, name = "n_pairs") |>
+    knitr::kable(
+      caption = "Table 7 - Paired accuracy rows against C0."
+    )
+}
+```
+
+```{r paired-summary}
+if (exists("paired_accuracy") && !is.null(paired_accuracy)) {
+  paired_accuracy_summary <- paired_accuracy |>
+    group_by(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      eval_split,
+      split_group
+    ) |>
+    summarise(
+      n_pairs = n(),
+      defended_correct = sum(defended_correct, na.rm = TRUE),
+      c0_correct = sum(c0_correct, na.rm = TRUE),
+      defended_accuracy = defended_correct / n_pairs,
+      c0_accuracy = c0_correct / n_pairs,
+      accuracy_delta_vs_c0 = defended_accuracy - c0_accuracy,
+      better = sum(defense_better, na.rm = TRUE),
+      worse = sum(defense_worse, na.rm = TRUE),
+      same = sum(same_outcome, na.rm = TRUE),
+      discordant_pairs = better + worse,
+      better_rate_among_discordant = if_else(discordant_pairs > 0, better / discordant_pairs, NA_real_),
+      sign_test_p_value = purrr::map2_dbl(
+        better,
+        discordant_pairs,
+        ~ safe_binom_p(.x, .y, p = 0.5, alternative = "greater")
+      ),
+      significant_improvement_05 = !is.na(sign_test_p_value) & sign_test_p_value < 0.05,
+      .groups = "drop"
+    ) |>
+    sort_scenarios()
+
+  paired_accuracy_all_attacks <- paired_accuracy |>
+    filter(is_attacked_split) |>
+    group_by(
+      scenario_id,
+      scenario_short,
+      scenario_label
+    ) |>
+    summarise(
+      eval_split = "all_attacks",
+      split_group = "all_attacks",
+      n_pairs = n(),
+      defended_correct = sum(defended_correct, na.rm = TRUE),
+      c0_correct = sum(c0_correct, na.rm = TRUE),
+      defended_accuracy = defended_correct / n_pairs,
+      c0_accuracy = c0_correct / n_pairs,
+      accuracy_delta_vs_c0 = defended_accuracy - c0_accuracy,
+      better = sum(defense_better, na.rm = TRUE),
+      worse = sum(defense_worse, na.rm = TRUE),
+      same = sum(same_outcome, na.rm = TRUE),
+      discordant_pairs = better + worse,
+      better_rate_among_discordant = if_else(discordant_pairs > 0, better / discordant_pairs, NA_real_),
+      sign_test_p_value = purrr::map2_dbl(
+        better,
+        discordant_pairs,
+        ~ safe_binom_p(.x, .y, p = 0.5, alternative = "greater")
+      ),
+      significant_improvement_05 = !is.na(sign_test_p_value) & sign_test_p_value < 0.05,
+      .groups = "drop"
+    ) |>
+    sort_scenarios()
+
+  paired_accuracy_summary_full <- bind_rows(paired_accuracy_summary, paired_accuracy_all_attacks) |>
+    mutate(
+      split_group = factor(split_group, levels = c("clean", "seen", "unseen", "all_attacks"))
+    ) |>
+    sort_scenarios()
+
+  write_acc_csv(paired_accuracy_summary_full, "08_paired_accuracy_summary_vs_c0.csv")
+
+  paired_accuracy_summary_full |>
+    filter(split_group %in% c("clean", "all_attacks")) |>
+    select(
+      scenario_short,
+      split_group,
+      n_pairs,
+      defended_accuracy,
+      c0_accuracy,
+      accuracy_delta_vs_c0,
+      better,
+      worse,
+      same,
+      better_rate_among_discordant,
+      sign_test_p_value,
+      significant_improvement_05
+    ) |>
+    mutate(
+      across(
+        c(defended_accuracy, c0_accuracy, accuracy_delta_vs_c0, better_rate_among_discordant),
+        ~ fmt_pct(.x)
+      ),
+      sign_test_p_value = scales::pvalue(sign_test_p_value, accuracy = 0.001)
+    ) |>
+    knitr::kable(
+      caption = "Table 8 - Paired accuracy summary against C0."
+    )
+}
+```
+
+# Bootstrap paired accuracy delta
+
+```{r paired-bootstrap}
+N_BOOTSTRAP <- 500
+set.seed(42)
+
+if (exists("paired_accuracy") && !is.null(paired_accuracy)) {
+  paired_bootstrap_accuracy <- paired_accuracy |>
+    group_by(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      eval_split,
+      split_group
+    ) |>
+    group_modify(
+      ~ summarise_bootstrap(
+        values = .x$accuracy_delta_vs_c0,
+        strata = .x$stratum,
+        B = N_BOOTSTRAP
+      )
+    ) |>
+    ungroup() |>
+    rename(
+      mean_accuracy_delta_vs_c0 = estimate,
+      boot_ci_low = ci_low,
+      boot_ci_high = ci_high
+    ) |>
+    sort_scenarios()
+
+  paired_bootstrap_accuracy_all <- paired_accuracy |>
+    filter(is_attacked_split) |>
+    group_by(
+      scenario_id,
+      scenario_short,
+      scenario_label
+    ) |>
+    group_modify(
+      ~ summarise_bootstrap(
+        values = .x$accuracy_delta_vs_c0,
+        strata = .x$stratum,
+        B = N_BOOTSTRAP
+      )
+    ) |>
+    ungroup() |>
+    mutate(
+      eval_split = "all_attacks",
+      split_group = "all_attacks"
+    ) |>
+    rename(
+      mean_accuracy_delta_vs_c0 = estimate,
+      boot_ci_low = ci_low,
+      boot_ci_high = ci_high
+    ) |>
+    sort_scenarios()
+
+  paired_bootstrap_accuracy_full <- bind_rows(paired_bootstrap_accuracy, paired_bootstrap_accuracy_all) |>
+    mutate(
+      split_group = factor(split_group, levels = c("clean", "seen", "unseen", "all_attacks"))
+    )
+
+  write_acc_csv(paired_bootstrap_accuracy_full, "09_paired_bootstrap_accuracy_delta_vs_c0.csv")
+
+  paired_bootstrap_accuracy_full |>
+    filter(split_group %in% c("clean", "all_attacks")) |>
+    select(
+      scenario_short,
+      split_group,
+      mean_accuracy_delta_vs_c0,
+      boot_ci_low,
+      boot_ci_high
+    ) |>
+    mutate(
+      across(c(mean_accuracy_delta_vs_c0, boot_ci_low, boot_ci_high), ~ fmt_pct(.x))
+    ) |>
+    knitr::kable(
+      caption = "Table 9 - Bootstrap CI for paired accuracy delta against C0."
+    )
+}
+```
+
+# Qualitative accuracy samples
+
+```{r qualitative-samples}
+accuracy_samples <- examples |>
+  mutate(
+    accuracy_category = case_when(
+      split_group == "clean" & task_success ~ "clean_correct",
+      split_group == "clean" & !task_success ~ "clean_wrong",
+      is_attacked_split & task_success & !asv ~ "robust_correct_attack_blocked",
+      is_attacked_split & !task_success & asv ~ "attack_followed_task_wrong",
+      is_attacked_split & !task_success & !asv ~ "attack_blocked_task_wrong",
+      TRUE ~ "other"
+    )
+  ) |>
+  group_by(scenario_short, split_group, accuracy_category) |>
+  slice_head(n = 5) |>
+  ungroup() |>
+  select(
+    scenario_short,
+    seed,
+    split_group,
+    accuracy_category,
+    task_name,
+    attack_type,
+    example_id,
+    expected_answer,
+    attack_target,
+    normalized_output,
+    task_success,
+    asv
+  )
+
+write_acc_csv(accuracy_samples, "10_qualitative_accuracy_samples.csv")
+
+accuracy_samples |>
+  knitr::kable(
+    caption = "Table 10 - Small qualitative sample of accuracy outcomes."
+  )
+```
+
+# Figures
+
+## Clean and robust accuracy
+
+```{r fig-clean-robust, fig.width=10.5, fig.height=6}
+clean_robust_plot_data <- accuracy_scenario_summary |>
+  filter(split_group %in% c("clean", "all_attacks")) |>
+  mutate(
+    split_label = recode(
+      as.character(split_group),
+      clean = "Clean accuracy",
+      all_attacks = "Robust accuracy"
+    )
+  )
+
+p_clean_robust <- clean_robust_plot_data |>
+  ggplot(aes(x = scenario_short, y = weighted_accuracy, color = scenario_short)) +
+  geom_errorbar(
+    aes(ymin = weighted_accuracy_ci_low, ymax = weighted_accuracy_ci_high),
+    width = 0.13,
+    linewidth = 0.7,
+    show.legend = FALSE
+  ) +
+  geom_point(size = 3.4, show.legend = FALSE) +
+  facet_wrap(~ split_label, scales = "free_y") +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Clean and robust accuracy by scenario",
+    subtitle = "Wilson intervals are computed over individual examples.",
+    x = "Scenario",
+    y = "Accuracy"
+  ) +
+  base_theme()
+
+print(p_clean_robust)
+
+save_acc_figure(
+  p_clean_robust,
+  "01_clean_and_robust_accuracy_wilson.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Seen vs unseen robust accuracy
+
+```{r fig-seen-unseen, fig.width=10.5, fig.height=6}
+p_seen_unseen <- accuracy_scenario_summary |>
+  filter(split_group %in% c("seen", "unseen")) |>
+  ggplot(aes(x = split_group, y = weighted_accuracy, color = scenario_short, group = scenario_short)) +
+  geom_line(alpha = 0.65) +
+  geom_errorbar(
+    aes(ymin = weighted_accuracy_ci_low, ymax = weighted_accuracy_ci_high),
+    width = 0.08,
+    linewidth = 0.65
+  ) +
+  geom_point(size = 3) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Robust accuracy on seen vs unseen attacks",
+    subtitle = "Higher values indicate better preservation of the original task.",
+    x = NULL,
+    y = "Robust accuracy",
+    color = "Scenario"
+  ) +
+  base_theme()
+
+print(p_seen_unseen)
+
+save_acc_figure(
+  p_seen_unseen,
+  "02_robust_accuracy_seen_vs_unseen.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Accuracy delta vs C0
+
+```{r fig-delta-vs-c0, fig.width=10.5, fig.height=6}
+p_delta <- accuracy_scenario_summary |>
+  filter(split_group %in% c("clean", "all_attacks")) |>
+  filter(scenario_id != "c0_base") |>
+  mutate(
+    split_label = recode(
+      as.character(split_group),
+      clean = "Clean accuracy delta",
+      all_attacks = "Robust accuracy delta"
+    )
+  ) |>
+  ggplot(aes(x = scenario_short, y = accuracy_delta_vs_c0, fill = scenario_short)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey45") +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  facet_wrap(~ split_label, scales = "free_y") +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Accuracy delta vs C0",
+    subtitle = "Positive values mean higher accuracy than C0.",
+    x = "Scenario",
+    y = "Scenario accuracy - C0 accuracy"
+  ) +
+  base_theme()
+
+print(p_delta)
+
+save_acc_figure(
+  p_delta,
+  "03_accuracy_delta_vs_c0.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Utility drop vs C0
+
+```{r fig-utility-drop, fig.width=10.5, fig.height=6}
+p_utility_drop <- accuracy_scenario_summary |>
+  filter(split_group %in% c("clean", "all_attacks")) |>
+  filter(scenario_id != "c0_base") |>
+  mutate(
+    split_label = recode(
+      as.character(split_group),
+      clean = "Clean utility drop",
+      all_attacks = "Robust utility drop"
+    )
+  ) |>
+  ggplot(aes(x = scenario_short, y = utility_drop_vs_c0, fill = scenario_short)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey45") +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  facet_wrap(~ split_label, scales = "free_y") +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Utility drop vs C0",
+    subtitle = "Negative values mean the scenario is more accurate than C0.",
+    x = "Scenario",
+    y = "C0 accuracy - scenario accuracy"
+  ) +
+  base_theme()
+
+print(p_utility_drop)
+
+save_acc_figure(
+  p_utility_drop,
+  "04_utility_drop_vs_c0.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Accuracy by task heatmap
+
+```{r fig-task-heatmap, fig.width=11, fig.height=7}
+p_task_heatmap <- accuracy_by_task_full |>
+  filter(split_group == "all_attacks") |>
+  ggplot(aes(x = scenario_short, y = fct_rev(factor(task_name)), fill = accuracy)) +
+  geom_tile(color = "white", linewidth = 0.35) +
+  geom_text(aes(label = scales::percent(accuracy, accuracy = 1)), size = 3) +
+  scale_fill_gradient2(
+    low = "#B2182B",
+    mid = "white",
+    high = "#2166AC",
+    midpoint = 0.5,
+    labels = scales::percent_format(accuracy = 1)
+  ) +
+  labs(
+    title = "Robust accuracy by task",
+    subtitle = "Blue means higher accuracy; red means lower accuracy.",
+    x = "Scenario",
+    y = "Task",
+    fill = "Accuracy"
+  ) +
+  base_theme()
+
+print(p_task_heatmap)
+
+save_acc_figure(
+  p_task_heatmap,
+  "05_robust_accuracy_by_task_heatmap.png",
+  width = 11,
+  height = 7
+)
+```
+
+## Accuracy by attack type heatmap
+
+```{r fig-attack-type-heatmap, fig.width=11, fig.height=7}
+p_attack_heatmap <- accuracy_by_attack_type |>
+  ggplot(aes(x = scenario_short, y = fct_rev(factor(attack_type)), fill = robust_accuracy)) +
+  geom_tile(color = "white", linewidth = 0.35) +
+  geom_text(aes(label = scales::percent(robust_accuracy, accuracy = 1)), size = 3) +
+  scale_fill_gradient2(
+    low = "#B2182B",
+    mid = "white",
+    high = "#2166AC",
+    midpoint = 0.5,
+    labels = scales::percent_format(accuracy = 1)
+  ) +
+  labs(
+    title = "Robust accuracy by attack type",
+    subtitle = "Blue means higher accuracy; red means lower accuracy.",
+    x = "Scenario",
+    y = "Attack type",
+    fill = "Robust accuracy"
+  ) +
+  base_theme()
+
+print(p_attack_heatmap)
+
+save_acc_figure(
+  p_attack_heatmap,
+  "06_robust_accuracy_by_attack_type_heatmap.png",
+  width = 11,
+  height = 7
+)
+```
+
+## Clean accuracy vs robust accuracy
+
+```{r fig-clean-vs-robust-scatter, fig.width=9, fig.height=6.5}
+p_clean_vs_robust <- clean_robust_summary |>
+  ggplot(aes(x = weighted_accuracy_clean, y = weighted_accuracy_all_attacks, color = scenario_short, label = scenario_short)) +
+  geom_point(size = 4) +
+  geom_text(nudge_y = 0.025, show.legend = FALSE) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Clean accuracy vs robust accuracy",
+    subtitle = "Ideal region is upper-right: high clean utility and high robustness.",
+    x = "Clean accuracy",
+    y = "Robust accuracy",
+    color = "Scenario"
+  ) +
+  base_theme()
+
+print(p_clean_vs_robust)
+
+save_acc_figure(
+  p_clean_vs_robust,
+  "07_clean_accuracy_vs_robust_accuracy.png",
+  width = 9,
+  height = 6.5
+)
+```
+
+## Robust accuracy vs ASV
+
+```{r fig-accuracy-vs-asv, fig.width=9, fig.height=6.5}
+p_accuracy_asv <- clean_robust_summary |>
+  ggplot(aes(x = weighted_asv_rate_all_attacks, y = weighted_accuracy_all_attacks, color = scenario_short, label = scenario_short)) +
+  geom_point(size = 4) +
+  geom_text(nudge_y = 0.025, show.legend = FALSE) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Robust accuracy vs ASV",
+    subtitle = "Ideal region is upper-left: high task utility and low attack success.",
+    x = "ASV",
+    y = "Robust accuracy",
+    color = "Scenario"
+  ) +
+  base_theme()
+
+print(p_accuracy_asv)
+
+save_acc_figure(
+  p_accuracy_asv,
+  "08_robust_accuracy_vs_asv.png",
+  width = 9,
+  height = 6.5
+)
+```
+
+## Paired accuracy delta bootstrap
+
+```{r fig-paired-bootstrap, fig.width=10.5, fig.height=6}
+if (exists("paired_bootstrap_accuracy_full")) {
+  p_paired_boot <- paired_bootstrap_accuracy_full |>
+    filter(split_group %in% c("clean", "all_attacks")) |>
+    mutate(
+      split_label = recode(
+        as.character(split_group),
+        clean = "Clean",
+        all_attacks = "All attacks"
+      )
+    ) |>
+    ggplot(aes(x = scenario_short, y = mean_accuracy_delta_vs_c0, color = scenario_short)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey45") +
+    geom_errorbar(
+      aes(ymin = boot_ci_low, ymax = boot_ci_high),
+      width = 0.13,
+      linewidth = 0.7,
+      show.legend = FALSE
+    ) +
+    geom_point(size = 3.3, show.legend = FALSE) +
+    facet_wrap(~ split_label, scales = "free_y") +
+    scale_color_manual(values = scenario_palette, drop = FALSE) +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    labs(
+      title = "Paired accuracy delta vs C0",
+      subtitle = "Bootstrap intervals. Positive values mean higher accuracy than C0.",
+      x = "Scenario",
+      y = "Accuracy delta vs C0"
+    ) +
+    base_theme()
+
+  print(p_paired_boot)
+
+  save_acc_figure(
+    p_paired_boot,
+    "09_paired_accuracy_delta_bootstrap.png",
+    width = 10.5,
+    height = 6
+  )
+}
+```
+
+## Discordant-pair accuracy sign test
+
+```{r fig-discordant-sign-test, fig.width=10.5, fig.height=6}
+if (exists("paired_accuracy_summary_full")) {
+  p_discordant <- paired_accuracy_summary_full |>
+    filter(split_group %in% c("clean", "all_attacks")) |>
+    mutate(
+      split_label = recode(
+        as.character(split_group),
+        clean = "Clean",
+        all_attacks = "All attacks"
+      )
+    ) |>
+    ggplot(aes(x = scenario_short, y = better_rate_among_discordant, fill = scenario_short)) +
+    geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey45") +
+    geom_col(width = 0.72, show.legend = FALSE) +
+    facet_wrap(~ split_label) +
+    scale_fill_manual(values = scenario_palette, drop = FALSE) +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(0, 1)) +
+    labs(
+      title = "Accuracy improvement among discordant pairs",
+      subtitle = "A pair improves when the defended scenario is correct and C0 is wrong.",
+      x = "Scenario",
+      y = "Better among discordant pairs"
+    ) +
+    base_theme()
+
+  print(p_discordant)
+
+  save_acc_figure(
+    p_discordant,
+    "10_accuracy_discordant_pair_sign_test.png",
+    width = 10.5,
+    height = 6
+  )
+}
+```
+
+# Paper-ready table
+
+```{r paper-ready-table}
+paper_accuracy_table <- clean_robust_summary |>
+  select(
+    scenario_short,
+    weighted_accuracy_clean,
+    weighted_accuracy_ci_low_clean,
+    weighted_accuracy_ci_high_clean,
+    accuracy_delta_vs_c0_clean,
+    utility_drop_vs_c0_clean,
+    weighted_accuracy_all_attacks,
+    weighted_accuracy_ci_low_all_attacks,
+    weighted_accuracy_ci_high_all_attacks,
+    accuracy_delta_vs_c0_all_attacks,
+    utility_drop_vs_c0_all_attacks,
+    robust_retention,
+    weighted_asv_rate_all_attacks
+  ) |>
+  mutate(
+    across(where(is.numeric), ~ fmt_pct(.x))
+  )
+
+write_acc_csv(paper_accuracy_table, "11_paper_ready_accuracy_table.csv")
+
+paper_accuracy_table |>
+  knitr::kable(
+    caption = "Table 11 - Paper-ready accuracy and task utility table."
+  )
+```
+
+# Methodological notes
+
+```{r methodological-notes, results='asis'}
+cat("
+## How to interpret accuracy and utility
+
+Clean accuracy measures normal task utility without an attack. Robust accuracy measures task utility under prompt injection.
+
+Task success is computed as normalized_output == expected_answer. Therefore, robust accuracy is not just the absence of attack following. A model can block the attack and still fail the original task; that would reduce ASV but not count as robustly correct.
+
+Utility drop vs C0 is computed as C0 accuracy - scenario accuracy. Negative utility drop means the scenario is more accurate than C0.
+
+The Wilson intervals in this report are example-level intervals for proportions. The paired sections compare each defended scenario against C0 on the same examples.
+")
+```
+
+# Generated files
+
+Tables are saved in:
+
+```text
+tables/accuracy_analysis/
+```
+
+Figures are saved in:
+
+```text
+figures/accuracy_analysis/
+```
+
+Main files:
+
+```text
+01_examples_with_task_success.csv
+02_accuracy_by_seed_split_fraction.csv
+03_accuracy_scenario_summary_fraction.csv
+04_clean_vs_robust_utility_summary.csv
+05_accuracy_by_task_fraction.csv
+06_accuracy_by_attack_type_fraction.csv
+07_paired_accuracy_rows_vs_c0.csv
+08_paired_accuracy_summary_vs_c0.csv
+09_paired_bootstrap_accuracy_delta_vs_c0.csv
+10_qualitative_accuracy_samples.csv
+11_paper_ready_accuracy_table.csv
+
+01_clean_and_robust_accuracy_wilson.png
+02_robust_accuracy_seen_vs_unseen.png
+03_accuracy_delta_vs_c0.png
+04_utility_drop_vs_c0.png
+05_robust_accuracy_by_task_heatmap.png
+06_robust_accuracy_by_attack_type_heatmap.png
+07_clean_accuracy_vs_robust_accuracy.png
+08_robust_accuracy_vs_asv.png
+09_paired_accuracy_delta_bootstrap.png
+10_accuracy_discordant_pair_sign_test.png
+```

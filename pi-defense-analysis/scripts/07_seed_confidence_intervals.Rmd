@@ -1,0 +1,756 @@
+---
+title: "RPC-PI Experiment — Seed Confidence Intervals"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6,
+  dpi = 300
+)
+
+options(knitr.kable.NA = "—")
+
+required_packages <- c(
+  "tidyverse",
+  "readr",
+  "ggplot2",
+  "scales",
+  "stringr",
+  "forcats",
+  "fs",
+  "here",
+  "knitr"
+)
+
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(scales)
+library(stringr)
+library(forcats)
+library(fs)
+library(here)
+library(knitr)
+```
+
+# Objetivo
+
+Este R Markdown calcula **intervalos de confiança clássicos entre seeds/runs** para as principais métricas do experimento RPC-PI.
+
+A unidade estatística aqui é a **seed/run**, não o exemplo individual. Portanto:
+
+- C0 e C1 possuem apenas uma seed;
+- C2, C3 e C4 possuem três seeds;
+- os desvios-padrão e ICs de C2/C3/C4 descrevem apenas a variabilidade observada entre essas três execuções;
+- C0/C1 não possuem variabilidade entre seeds suficiente para estimar desvio-padrão ou intervalo de confiança.
+
+A fórmula usada é:
+
+\[
+IC_{95\%} = \bar{x} \pm t_{0.975, n-1} \cdot \frac{s}{\sqrt{n}}
+\]
+
+onde \(n\) é o número de seeds disponíveis para o cenário.
+
+# Caminhos
+
+```{r paths}
+DATA_DIR <- here::here("data", "results")
+DESC_DIR <- here::here("tables", "descriptive")
+
+OUT_TABLE_DIR <- here::here("tables", "seed_confidence_intervals")
+OUT_FIG_DIR <- here::here("figures", "seed_confidence_intervals")
+
+fs::dir_create(OUT_TABLE_DIR)
+fs::dir_create(OUT_FIG_DIR)
+
+if (!dir.exists(DATA_DIR)) {
+  stop(
+    "Não encontrei data/results/. Extraia o ZIP primeiro com: ",
+    "unzip('results.zip', exdir = 'data')"
+  )
+}
+```
+
+# Funções auxiliares
+
+```{r helpers}
+read_first_existing <- function(paths, required = TRUE) {
+  existing <- paths[file.exists(paths)]
+
+  if (length(existing) == 0) {
+    if (required) {
+      stop("Nenhum destes arquivos foi encontrado:\n", paste(paths, collapse = "\n"))
+    }
+    return(NULL)
+  }
+
+  readr::read_csv(existing[[1]], show_col_types = FALSE)
+}
+
+coalesce_col <- function(df, cols, default = NA_real_) {
+  existing <- cols[cols %in% names(df)]
+
+  if (length(existing) == 0) {
+    return(rep(default, nrow(df)))
+  }
+
+  out <- df[[existing[[1]]]]
+  if (length(existing) > 1) {
+    for (nm in existing[-1]) {
+      out <- dplyr::coalesce(out, df[[nm]])
+    }
+  }
+
+  out
+}
+
+scenario_order <- c(
+  "c0_base",
+  "c1_struq_format_only",
+  "c2_struq_sft",
+  "c3_secalign_dpo",
+  "c4_ih_sft"
+)
+
+scenario_labels <- tibble(
+  scenario_id = scenario_order,
+  scenario_short = c("C0", "C1", "C2", "C3", "C4"),
+  scenario_label = c(
+    "C0 — Base model",
+    "C1 — StruQ format-only",
+    "C2 — StruQ-like SFT",
+    "C3 — SecAlign-like DPO",
+    "C4 — Instruction-Hierarchy-like SFT"
+  )
+)
+
+scenario_palette <- c(
+  C0 = "#7F7F7F",
+  C1 = "#D55E00",
+  C2 = "#0072B2",
+  C3 = "#CC79A7",
+  C4 = "#009E73"
+)
+
+sort_scenarios <- function(df) {
+  df |>
+    mutate(
+      scenario_id = factor(scenario_id, levels = scenario_order),
+      scenario_short = factor(scenario_short, levels = c("C0", "C1", "C2", "C3", "C4"))
+    ) |>
+    arrange(scenario_id)
+}
+
+add_scenario_info <- function(df) {
+  out <- df |>
+    left_join(scenario_labels, by = "scenario_id", suffix = c("", "_lookup"))
+
+  if (!("scenario_label" %in% names(out))) {
+    out$scenario_label <- out$scenario_label_lookup
+  } else if ("scenario_label_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_label = coalesce(
+          as.character(scenario_label),
+          as.character(scenario_label_lookup)
+        )
+      )
+  }
+
+  if (!("scenario_short" %in% names(out))) {
+    out$scenario_short <- out$scenario_short_lookup
+  } else if ("scenario_short_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_short = coalesce(
+          as.character(scenario_short),
+          as.character(scenario_short_lookup)
+        )
+      )
+  }
+
+  out |>
+    select(-any_of(c("scenario_label_lookup", "scenario_short_lookup"))) |>
+    sort_scenarios()
+}
+
+safe_sd <- function(x) {
+  if (sum(!is.na(x)) <= 1) return(NA_real_)
+  sd(x, na.rm = TRUE)
+}
+
+safe_sem <- function(x) {
+  n <- sum(!is.na(x))
+  if (n <= 1) return(NA_real_)
+  sd(x, na.rm = TRUE) / sqrt(n)
+}
+
+safe_tcrit <- function(n, confidence = 0.95) {
+  if (is.na(n) || n <= 1) return(NA_real_)
+  alpha <- 1 - confidence
+  qt(1 - alpha / 2, df = n - 1)
+}
+
+clip_01 <- function(x) {
+  pmin(pmax(x, 0), 1)
+}
+
+fmt_pct <- function(x, accuracy = 0.1) {
+  scales::percent(x, accuracy = accuracy)
+}
+
+base_theme <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      legend.position = "bottom",
+      plot.title.position = "plot",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey30"),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(face = "bold")
+    )
+}
+
+write_ci_csv <- function(df, filename) {
+  readr::write_csv(df, file.path(OUT_TABLE_DIR, filename))
+  invisible(df)
+}
+
+save_ci_figure <- function(plot, filename, width = 10, height = 6) {
+  ggsave(
+    file.path(OUT_FIG_DIR, filename),
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = 320,
+    bg = "white"
+  )
+  invisible(plot)
+}
+```
+
+# Leitura das métricas por seed/run
+
+```{r load-run-level}
+run_level <- read_first_existing(c(
+  file.path(DESC_DIR, "06_run_level_metrics_recomputed.csv"),
+  file.path(DATA_DIR, "metrics", "full", "run_level_metrics.csv")
+)) |>
+  add_scenario_info()
+
+# Mantém Injection Following Rate explícita.
+# Neste setup de classificação, ela é operacionalizada como normalized_output == attack_target;
+# por isso targeted_asr funciona como fallback.
+run_level$injection_following_rate_seen <- coalesce_col(
+  run_level,
+  c("injection_following_rate_seen", "targeted_asr_seen", "attack_success_rate_seen", "binary_asv_seen")
+)
+
+run_level$injection_following_rate_unseen <- coalesce_col(
+  run_level,
+  c("injection_following_rate_unseen", "targeted_asr_unseen", "attack_success_rate_unseen", "binary_asv_unseen")
+)
+
+run_level$injection_following_rate_all_attacks <- coalesce_col(
+  run_level,
+  c("injection_following_rate_all_attacks", "targeted_asr_all_attacks", "attack_success_rate_all_attacks", "binary_asv_all_attacks")
+)
+
+run_level$targeted_asr_seen <- coalesce_col(
+  run_level,
+  c("targeted_asr_seen", "injection_following_rate_seen", "attack_success_rate_seen", "binary_asv_seen")
+)
+
+run_level$targeted_asr_unseen <- coalesce_col(
+  run_level,
+  c("targeted_asr_unseen", "injection_following_rate_unseen", "attack_success_rate_unseen", "binary_asv_unseen")
+)
+
+run_level$targeted_asr_all_attacks <- coalesce_col(
+  run_level,
+  c("targeted_asr_all_attacks", "injection_following_rate_all_attacks", "attack_success_rate_all_attacks", "binary_asv_all_attacks")
+)
+
+seed_coverage <- run_level |>
+  group_by(scenario_id, scenario_short, scenario_label) |>
+  summarise(
+    n_seeds = n_distinct(seed),
+    seeds = paste(sort(unique(seed)), collapse = ", "),
+    .groups = "drop"
+  ) |>
+  sort_scenarios()
+
+write_ci_csv(seed_coverage, "01_seed_coverage.csv")
+
+seed_coverage |>
+  knitr::kable(
+    caption = "Tabela 1 — Seeds disponíveis por cenário."
+  )
+```
+
+# Métricas incluídas
+
+```{r metric-definitions}
+metric_definitions <- tribble(
+  ~metric, ~metric_label, ~metric_group, ~direction, ~display_type,
+  "clean_accuracy", "Clean accuracy", "Clean utility", "higher", "percent",
+  "benign_utility", "Benign utility", "Clean utility", "higher", "percent",
+  "pna_t", "PNA-T", "Clean utility", "higher", "percent",
+
+  "robust_accuracy_all_attacks", "Robust accuracy — all attacks", "Robust utility", "higher", "percent",
+  "robust_accuracy_seen", "Robust accuracy — seen", "Robust utility", "higher", "percent",
+  "robust_accuracy_unseen", "Robust accuracy — unseen", "Robust utility", "higher", "percent",
+
+  "utility_under_attack_all_attacks", "Utility under attack — all attacks", "Robust utility", "higher", "percent",
+
+  "targeted_asr_all_attacks", "Targeted ASR — all attacks", "Attack success", "lower", "percent",
+  "targeted_asr_seen", "Targeted ASR — seen", "Attack success", "lower", "percent",
+  "targeted_asr_unseen", "Targeted ASR — unseen", "Attack success", "lower", "percent",
+
+  "injection_following_rate_all_attacks", "Injection Following Rate — all attacks", "Attack success", "lower", "percent",
+  "injection_following_rate_seen", "Injection Following Rate — seen", "Attack success", "lower", "percent",
+  "injection_following_rate_unseen", "Injection Following Rate — unseen", "Attack success", "lower", "percent",
+
+  "untargeted_asr_all_attacks", "Untargeted ASR — all attacks", "Attack success", "lower", "percent",
+  "untargeted_asr_seen", "Untargeted ASR — seen", "Attack success", "lower", "percent",
+  "untargeted_asr_unseen", "Untargeted ASR — unseen", "Attack success", "lower", "percent",
+
+  "invalid_output_rate_all_attacks", "Invalid output rate — all attacks", "Output validity", "lower", "percent",
+  "invalid_output_rate_seen", "Invalid output rate — seen", "Output validity", "lower", "percent",
+  "invalid_output_rate_unseen", "Invalid output rate — unseen", "Output validity", "lower", "percent",
+  "invalid_output_rate_clean", "Invalid output rate — clean", "Output validity", "lower", "percent",
+
+  "utility_drop", "Utility drop vs C0", "Delta vs C0", "lower", "percentage_points",
+  "robust_accuracy_delta_vs_c0_all_attacks", "Robust accuracy delta vs C0", "Delta vs C0", "higher", "percentage_points",
+  "utility_drop_under_attack_all_attacks", "Utility drop under attack vs C0", "Delta vs C0", "lower", "percentage_points",
+
+  "clean_effectiveness", "Clean effectiveness vs C0", "Delta vs C0", "higher", "ratio",
+  "adjusted_win_rate_clean_vs_c0", "Adjusted win rate vs C0", "Win rate", "higher", "percent"
+)
+
+available_metrics <- metric_definitions |>
+  filter(metric %in% names(run_level))
+
+write_ci_csv(available_metrics, "02_metric_definitions_used.csv")
+
+available_metrics |>
+  knitr::kable(
+    caption = "Tabela 2 — Métricas disponíveis usadas no cálculo dos intervalos."
+  )
+```
+
+# Cálculo dos intervalos entre seeds
+
+```{r compute-confidence-intervals}
+run_metric_long <- run_level |>
+  select(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    seed,
+    any_of(available_metrics$metric)
+  ) |>
+  pivot_longer(
+    cols = any_of(available_metrics$metric),
+    names_to = "metric",
+    values_to = "value"
+  ) |>
+  left_join(available_metrics, by = "metric") |>
+  filter(!is.na(value))
+
+seed_ci <- run_metric_long |>
+  group_by(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    metric,
+    metric_label,
+    metric_group,
+    direction,
+    display_type
+  ) |>
+  summarise(
+    n_seeds = n_distinct(seed),
+    seeds = paste(sort(unique(seed)), collapse = ", "),
+    mean = mean(value, na.rm = TRUE),
+    std = safe_sd(value),
+    sem = safe_sem(value),
+    tcrit_95 = safe_tcrit(n_distinct(seed), confidence = 0.95),
+    ci95_margin = tcrit_95 * sem,
+    ci95_low = mean - ci95_margin,
+    ci95_high = mean + ci95_margin,
+    min = min(value, na.rm = TRUE),
+    max = max(value, na.rm = TRUE),
+    range = max - min,
+    .groups = "drop"
+  ) |>
+  mutate(
+    has_ci95 = !is.na(ci95_low) & !is.na(ci95_high),
+    ci95_low_clipped = if_else(display_type == "percent", clip_01(ci95_low), ci95_low),
+    ci95_high_clipped = if_else(display_type == "percent", clip_01(ci95_high), ci95_high),
+    interpretation_note = case_when(
+      n_seeds <= 1 ~ "No CI: only one seed/run.",
+      n_seeds == 3 ~ "Descriptive t-interval across three seeds.",
+      TRUE ~ "Descriptive t-interval across seeds."
+    )
+  ) |>
+  sort_scenarios()
+
+seed_ci_percent <- seed_ci |>
+  mutate(
+    across(
+      c(mean, std, sem, ci95_margin, ci95_low, ci95_high, ci95_low_clipped, ci95_high_clipped, min, max, range),
+      ~ ifelse(display_type %in% c("percent", "percentage_points"), .x * 100, .x)
+    )
+  )
+
+write_ci_csv(run_metric_long, "03_run_metric_long_fraction.csv")
+write_ci_csv(seed_ci, "04_seed_confidence_intervals_fraction.csv")
+write_ci_csv(seed_ci_percent, "04_seed_confidence_intervals_display_units.csv")
+
+key_ci_metrics <- c(
+  "clean_accuracy",
+  "robust_accuracy_all_attacks",
+  "injection_following_rate_all_attacks",
+  "untargeted_asr_all_attacks",
+  "invalid_output_rate_all_attacks",
+  "utility_drop"
+)
+
+key_seed_ci <- seed_ci |>
+  dplyr::filter(.data$metric %in% key_ci_metrics)
+
+write_ci_csv(key_seed_ci, "04b_key_seed_confidence_intervals_fraction.csv")
+
+key_seed_ci |>
+  dplyr::select(
+    scenario_short,
+    metric,
+    metric_label,
+    n_seeds,
+    mean,
+    std,
+    sem,
+    ci95_low,
+    ci95_high,
+    min,
+    max,
+    interpretation_note
+  ) |>
+  dplyr::mutate(
+    dplyr::across(c(mean, std, sem, ci95_low, ci95_high, min, max), ~ fmt_pct(.x))
+  ) |>
+  knitr::kable(
+    caption = "Tabela 3 — Intervalos de confiança descritivos entre seeds para métricas principais."
+  )
+```
+
+# Tabela compacta paper-ready
+
+```{r paper-ready-table}
+paper_metrics <- c(
+  "clean_accuracy",
+  "robust_accuracy_all_attacks",
+  "injection_following_rate_all_attacks",
+  "targeted_asr_all_attacks",
+  "untargeted_asr_all_attacks",
+  "invalid_output_rate_all_attacks",
+  "utility_drop"
+)
+
+paper_ci_table <- seed_ci |>
+  filter(metric %in% paper_metrics) |>
+  mutate(
+    mean_display = if_else(
+      display_type %in% c("percent", "percentage_points"),
+      fmt_pct(mean),
+      scales::number(mean, accuracy = 0.001)
+    ),
+    ci_display = case_when(
+      !has_ci95 ~ "—",
+      display_type %in% c("percent", "percentage_points") ~ paste0(
+        "[",
+        fmt_pct(ci95_low),
+        ", ",
+        fmt_pct(ci95_high),
+        "]"
+      ),
+      TRUE ~ paste0(
+        "[",
+        scales::number(ci95_low, accuracy = 0.001),
+        ", ",
+        scales::number(ci95_high, accuracy = 0.001),
+        "]"
+      )
+    ),
+    mean_ci = if_else(
+      has_ci95,
+      paste0(mean_display, " ", ci_display),
+      mean_display
+    )
+  ) |>
+  select(
+    scenario_short,
+    metric,
+    metric_label,
+    n_seeds,
+    mean,
+    std,
+    ci95_low,
+    ci95_high,
+    mean_display,
+    ci_display,
+    mean_ci,
+    interpretation_note
+  )
+
+write_ci_csv(paper_ci_table, "05_paper_ready_ci_table.csv")
+
+paper_ci_table |>
+  select(
+    Scenario = scenario_short,
+    Metric = metric_label,
+    `N seeds` = n_seeds,
+    `Mean` = mean_display,
+    `95% CI` = ci_display,
+    Note = interpretation_note
+  ) |>
+  knitr::kable(
+    caption = "Tabela 4 — Tabela compacta com média e IC95 entre seeds."
+  )
+```
+
+# Visualização dos intervalos
+
+## Métricas principais
+
+```{r fig-key-ci, fig.width=11, fig.height=8}
+key_plot_metrics <- c(
+  "clean_accuracy",
+  "robust_accuracy_all_attacks",
+  "injection_following_rate_all_attacks",
+  "untargeted_asr_all_attacks",
+  "invalid_output_rate_all_attacks",
+  "utility_drop"
+)
+
+key_ci_plot_data <- seed_ci |>
+  filter(metric %in% key_plot_metrics) |>
+  mutate(
+    metric_label = factor(
+      metric_label,
+      levels = available_metrics |>
+        filter(metric %in% key_plot_metrics) |>
+        pull(metric_label)
+    ),
+    mean_plot = mean * 100,
+    ci_low_plot = ci95_low * 100,
+    ci_high_plot = ci95_high * 100
+  )
+
+p_key_ci <- key_ci_plot_data |>
+  ggplot(aes(x = scenario_short, y = mean_plot, color = scenario_short)) +
+  geom_errorbar(
+    aes(ymin = ci_low_plot, ymax = ci_high_plot),
+    width = 0.14,
+    linewidth = 0.7,
+    na.rm = TRUE,
+    show.legend = FALSE
+  ) +
+  geom_point(size = 3.2, show.legend = FALSE) +
+  facet_wrap(~ metric_label, scales = "free_y", ncol = 2) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Seed-level 95% confidence intervals",
+    subtitle = "Intervalos t descritivos entre seeds. C0/C1 têm apenas uma seed e aparecem sem barra de IC.",
+    x = "Scenario",
+    y = "Value (%)"
+  ) +
+  base_theme()
+
+print(p_key_ci)
+
+save_ci_figure(
+  p_key_ci,
+  "01_seed_ci_key_metrics.png",
+  width = 11,
+  height = 8
+)
+```
+
+## Métricas de segurança sob ataque
+
+```{r fig-security-ci, fig.width=11, fig.height=7}
+security_metrics <- c(
+  "robust_accuracy_all_attacks",
+  "injection_following_rate_all_attacks",
+  "targeted_asr_all_attacks",
+  "untargeted_asr_all_attacks",
+  "invalid_output_rate_all_attacks"
+)
+
+security_ci_plot_data <- seed_ci |>
+  filter(metric %in% security_metrics) |>
+  mutate(
+    metric_label = factor(
+      metric_label,
+      levels = available_metrics |>
+        filter(metric %in% security_metrics) |>
+        pull(metric_label)
+    ),
+    mean_plot = mean * 100,
+    ci_low_plot = ci95_low * 100,
+    ci_high_plot = ci95_high * 100
+  )
+
+p_security_ci <- security_ci_plot_data |>
+  ggplot(aes(x = scenario_short, y = mean_plot, color = scenario_short)) +
+  geom_errorbar(
+    aes(ymin = ci_low_plot, ymax = ci_high_plot),
+    width = 0.14,
+    linewidth = 0.7,
+    na.rm = TRUE,
+    show.legend = FALSE
+  ) +
+  geom_point(size = 3.2, show.legend = FALSE) +
+  facet_wrap(~ metric_label, scales = "free_y", ncol = 2) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Security metrics with seed-level intervals",
+    subtitle = "Os intervalos mostram variabilidade entre seeds, não incerteza por exemplo.",
+    x = "Scenario",
+    y = "Value (%)"
+  ) +
+  base_theme()
+
+print(p_security_ci)
+
+save_ci_figure(
+  p_security_ci,
+  "02_seed_ci_security_metrics.png",
+  width = 11,
+  height = 7
+)
+```
+
+## Seen vs unseen
+
+```{r fig-seen-unseen-ci, fig.width=11, fig.height=7}
+seen_unseen_metrics <- c(
+  "robust_accuracy_seen",
+  "robust_accuracy_unseen",
+  "injection_following_rate_seen",
+  "injection_following_rate_unseen"
+)
+
+seen_unseen_ci_plot_data <- seed_ci |>
+  filter(metric %in% seen_unseen_metrics) |>
+  mutate(
+    attack_group = case_when(
+      str_detect(metric, "_seen$") ~ "Seen",
+      str_detect(metric, "_unseen$") ~ "Unseen",
+      TRUE ~ "All"
+    ),
+    base_metric = case_when(
+      str_detect(metric, "robust_accuracy") ~ "Robust accuracy",
+      str_detect(metric, "injection_following_rate") ~ "Injection Following Rate",
+      TRUE ~ metric_label
+    ),
+    mean_plot = mean * 100,
+    ci_low_plot = ci95_low * 100,
+    ci_high_plot = ci95_high * 100
+  )
+
+p_seen_unseen_ci <- seen_unseen_ci_plot_data |>
+  ggplot(aes(x = attack_group, y = mean_plot, color = scenario_short, group = scenario_short)) +
+  geom_line(alpha = 0.55) +
+  geom_errorbar(
+    aes(ymin = ci_low_plot, ymax = ci_high_plot),
+    width = 0.08,
+    linewidth = 0.6,
+    na.rm = TRUE
+  ) +
+  geom_point(size = 3) +
+  facet_wrap(~ base_metric, scales = "free_y") +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Seen vs unseen metrics with seed-level intervals",
+    subtitle = "Comparação entre ataques vistos e não vistos usando intervalos entre seeds.",
+    x = NULL,
+    y = "Value (%)",
+    color = "Scenario"
+  ) +
+  base_theme()
+
+print(p_seen_unseen_ci)
+
+save_ci_figure(
+  p_seen_unseen_ci,
+  "03_seed_ci_seen_vs_unseen.png",
+  width = 11,
+  height = 7
+)
+```
+
+# Observações metodológicas
+
+```{r methodological-notes, results='asis'}
+cat("
+## Interpretação
+
+As médias por cenário são médias entre seeds/runs. Como C2, C3 e C4 possuem três seeds, os desvios-padrão desses cenários indicam apenas a variabilidade observada entre essas três execuções. C0 e C1 possuem uma seed, então não há variabilidade entre seeds a estimar nesses cenários.
+
+Esses intervalos não devem ser lidos como evidência estatística forte de normalidade ou significância. Eles são úteis para resumir a estabilidade entre execuções, especialmente para comparar C2, C3 e C4.
+
+Para inferência estatística posterior em proporções, especialmente em métricas próximas de zero ou um, é melhor usar intervalos de Wilson, testes binomiais, bootstrap pareado ou métodos estratificados por task e tipo de ataque, em vez de assumir normalidade simples.
+")
+```
+
+# Arquivos gerados
+
+Este Rmd salva tabelas em:
+
+```text
+tables/seed_confidence_intervals/
+```
+
+e figuras em:
+
+```text
+figures/seed_confidence_intervals/
+```
+
+Arquivos principais:
+
+```text
+01_seed_coverage.csv
+02_metric_definitions_used.csv
+03_run_metric_long_fraction.csv
+04_seed_confidence_intervals_fraction.csv
+04_seed_confidence_intervals_display_units.csv
+05_paper_ready_ci_table.csv
+
+01_seed_ci_key_metrics.png
+02_seed_ci_security_metrics.png
+03_seed_ci_seen_vs_unseen.png
+```

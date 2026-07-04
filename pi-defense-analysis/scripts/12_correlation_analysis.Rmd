@@ -1,0 +1,1489 @@
+---
+title: "RPC-PI Experiment - Correlation Analysis"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6,
+  dpi = 300
+)
+
+options(knitr.kable.NA = "-")
+
+required_packages <- c(
+  "tidyverse",
+  "readr",
+  "ggplot2",
+  "scales",
+  "stringr",
+  "forcats",
+  "fs",
+  "here",
+  "knitr"
+)
+
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(scales)
+library(stringr)
+library(forcats)
+library(fs)
+library(here)
+library(knitr)
+```
+
+# Objective
+
+This R Markdown performs an exploratory **correlation analysis** across security, utility, robustness, validity, and judged preference metrics.
+
+The main question is:
+
+```text
+How do attack success, robust accuracy, clean utility, invalid outputs, and win rate relate to each other?
+```
+
+The most important relationship is:
+
+```text
+ASV / Injection Following Rate vs Robust Accuracy
+```
+
+Ideally, a strong defense should move toward:
+
+```text
+low ASV + high robust accuracy
+```
+
+This analysis includes:
+
+- scenario-seed level correlations;
+- scenario-level correlations;
+- task-level correlations;
+- attack-type correlations;
+- task x attack-type correlations;
+- win-rate correlations when pairwise judge artifacts are available;
+- Spearman and Pearson correlations;
+- correlation heatmaps;
+- scatterplots for the main security-utility relationships.
+
+# Methodological caution
+
+Correlation is exploratory and not causal.
+
+Scenario-level correlations use only five scenario points, so they are unstable. Scenario-seed and task/attack-type levels provide more points, but they still have structural dependence because the same scenarios, tasks, seeds, and attack types are repeated.
+
+For this reason, Spearman correlation is used as the main interpretation because it is more robust to non-normal proportions and nonlinear monotonic relationships.
+
+# Paths
+
+```{r paths}
+DATA_DIR <- here::here("data", "results")
+DESC_DIR <- here::here("tables", "descriptive")
+PAIRWISE_DIR <- file.path(DATA_DIR, "pairwise_metrics", "full")
+
+OUT_TABLE_DIR <- here::here("tables", "correlation_analysis")
+OUT_FIG_DIR <- here::here("figures", "correlation_analysis")
+
+fs::dir_create(OUT_TABLE_DIR)
+fs::dir_create(OUT_FIG_DIR)
+
+if (!dir.exists(DATA_DIR)) {
+  stop(
+    "Could not find data/results/. Extract the ZIP first with: ",
+    "unzip('results.zip', exdir = 'data')"
+  )
+}
+```
+
+# Helper functions
+
+```{r helpers}
+read_first_existing <- function(paths, required = TRUE) {
+  existing <- paths[file.exists(paths)]
+
+  if (length(existing) == 0) {
+    if (required) {
+      stop("None of these files were found:\n", paste(paths, collapse = "\n"))
+    }
+    return(NULL)
+  }
+
+  readr::read_csv(existing[[1]], show_col_types = FALSE)
+}
+
+scenario_order <- c(
+  "c0_base",
+  "c1_struq_format_only",
+  "c2_struq_sft",
+  "c3_secalign_dpo",
+  "c4_ih_sft"
+)
+
+scenario_labels <- tibble(
+  scenario_id = scenario_order,
+  scenario_short = c("C0", "C1", "C2", "C3", "C4"),
+  scenario_label = c(
+    "C0 - Base model",
+    "C1 - StruQ format-only",
+    "C2 - StruQ-like SFT",
+    "C3 - SecAlign-like DPO",
+    "C4 - Instruction-Hierarchy-like SFT"
+  )
+)
+
+scenario_palette <- c(
+  C0 = "#7F7F7F",
+  C1 = "#D55E00",
+  C2 = "#0072B2",
+  C3 = "#CC79A7",
+  C4 = "#009E73"
+)
+
+metric_labels <- c(
+  clean_accuracy = "Clean accuracy",
+  robust_accuracy_all_attacks = "Robust accuracy",
+  robust_accuracy_seen = "Robust accuracy seen",
+  robust_accuracy_unseen = "Robust accuracy unseen",
+  asv_rate_all_attacks = "ASV",
+  asv_rate_seen = "ASV seen",
+  asv_rate_unseen = "ASV unseen",
+  injection_following_rate_all_attacks = "Injection Following Rate",
+  invalid_output_rate_clean = "Invalid output clean",
+  invalid_output_rate_all_attacks = "Invalid output attacks",
+  robust_retention = "Robust retention",
+  robust_minus_clean_accuracy = "Robust minus clean accuracy",
+  accuracy_delta_vs_c0_clean = "Clean accuracy delta vs C0",
+  accuracy_delta_vs_c0_all_attacks = "Robust accuracy delta vs C0",
+  asv_reduction_vs_c0_all_attacks = "ASV reduction vs C0",
+  adjusted_win_rate = "Adjusted win rate",
+  win_rate = "Win rate",
+  loss_rate = "Loss rate",
+  tie_rate = "Tie rate",
+  net_win_rate = "Net win rate",
+  non_tie_win_rate = "Non-tie win rate",
+  invalid_judgment_rate = "Invalid judgment rate"
+)
+
+label_metric <- function(x) {
+  out <- metric_labels[x]
+  out[is.na(out)] <- x[is.na(out)]
+  unname(out)
+}
+
+sort_scenarios <- function(df) {
+  df |>
+    mutate(
+      scenario_id = factor(as.character(scenario_id), levels = scenario_order),
+      scenario_short = factor(as.character(scenario_short), levels = c("C0", "C1", "C2", "C3", "C4"))
+    ) |>
+    arrange(scenario_id)
+}
+
+add_scenario_info <- function(df, id_col = "scenario_id", label_col = NULL) {
+  out <- df |>
+    mutate(scenario_id = as.character(.data[[id_col]]))
+
+  if (!is.null(label_col) && label_col %in% names(out)) {
+    out <- out |>
+      mutate(scenario_label = as.character(.data[[label_col]]))
+  }
+
+  out <- out |>
+    left_join(scenario_labels, by = "scenario_id", suffix = c("", "_lookup"))
+
+  if (!("scenario_label" %in% names(out))) {
+    out$scenario_label <- out$scenario_id
+  }
+
+  if ("scenario_label_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_label = coalesce(
+          as.character(scenario_label),
+          as.character(scenario_label_lookup)
+        )
+      )
+  }
+
+  if (!("scenario_short" %in% names(out))) {
+    out$scenario_short <- NA_character_
+  }
+
+  if ("scenario_short_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_short = coalesce(
+          as.character(scenario_short),
+          as.character(scenario_short_lookup)
+        )
+      )
+  }
+
+  out |>
+    mutate(
+      scenario_short = ifelse(
+        is.na(scenario_short),
+        recode(
+          as.character(scenario_id),
+          c0_base = "C0",
+          c1_struq_format_only = "C1",
+          c2_struq_sft = "C2",
+          c3_secalign_dpo = "C3",
+          c4_ih_sft = "C4",
+          .default = as.character(scenario_id)
+        ),
+        scenario_short
+      )
+    ) |>
+    select(-any_of(c("scenario_label_lookup", "scenario_short_lookup"))) |>
+    sort_scenarios()
+}
+
+to_logical_safe <- function(x) {
+  if (is.logical(x)) return(x)
+
+  x_chr <- tolower(as.character(x))
+
+  case_when(
+    x_chr %in% c("true", "t", "1", "yes") ~ TRUE,
+    x_chr %in% c("false", "f", "0", "no") ~ FALSE,
+    TRUE ~ NA
+  )
+}
+
+safe_mean <- function(x) {
+  if (sum(!is.na(x)) == 0) return(NA_real_)
+  mean(x, na.rm = TRUE)
+}
+
+fmt_pct <- function(x, accuracy = 0.1) {
+  scales::percent(x, accuracy = accuracy)
+}
+
+base_theme <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      legend.position = "bottom",
+      plot.title.position = "plot",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey30"),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(face = "bold")
+    )
+}
+
+write_corr_csv <- function(df, filename) {
+  readr::write_csv(df, file.path(OUT_TABLE_DIR, filename))
+  invisible(df)
+}
+
+save_corr_figure <- function(plot, filename, width = 10, height = 6) {
+  ggsave(
+    file.path(OUT_FIG_DIR, filename),
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = 320,
+    bg = "white"
+  )
+  invisible(plot)
+}
+
+safe_cor_test <- function(x, y, method = "spearman") {
+  x <- as.numeric(x)
+  y <- as.numeric(y)
+
+  ok <- is.finite(x) & is.finite(y)
+  x <- x[ok]
+  y <- y[ok]
+
+  n <- length(x)
+
+  if (n < 3 || length(unique(x)) < 2 || length(unique(y)) < 2) {
+    return(tibble(
+      method = method,
+      n = n,
+      estimate = NA_real_,
+      p_value = NA_real_
+    ))
+  }
+
+  out <- tryCatch(
+    suppressWarnings(stats::cor.test(x, y, method = method, exact = FALSE)),
+    error = function(e) NULL
+  )
+
+  if (is.null(out)) {
+    return(tibble(
+      method = method,
+      n = n,
+      estimate = NA_real_,
+      p_value = NA_real_
+    ))
+  }
+
+  tibble(
+    method = method,
+    n = n,
+    estimate = unname(out$estimate),
+    p_value = out$p.value
+  )
+}
+
+compute_correlations <- function(df, metric_cols, level_name) {
+  metric_cols <- intersect(metric_cols, names(df))
+
+  if (length(metric_cols) < 2) {
+    return(tibble())
+  }
+
+  pairs <- combn(metric_cols, 2, simplify = FALSE)
+
+  purrr::map_dfr(
+    pairs,
+    function(pair) {
+      x <- pair[[1]]
+      y <- pair[[2]]
+
+      bind_rows(
+        safe_cor_test(df[[x]], df[[y]], method = "spearman"),
+        safe_cor_test(df[[x]], df[[y]], method = "pearson")
+      ) |>
+        mutate(
+          level = level_name,
+          metric_x = x,
+          metric_y = y,
+          metric_x_label = label_metric(x),
+          metric_y_label = label_metric(y),
+          pair_id = paste(sort(c(x, y)), collapse = "__"),
+          .before = 1
+        )
+    }
+  ) |>
+    select(
+      level,
+      method,
+      metric_x,
+      metric_y,
+      metric_x_label,
+      metric_y_label,
+      pair_id,
+      n,
+      estimate,
+      p_value
+    )
+}
+
+make_corr_matrix_long <- function(df, metric_cols, method = "spearman") {
+  metric_cols <- intersect(metric_cols, names(df))
+
+  if (length(metric_cols) < 2) {
+    return(tibble())
+  }
+
+  mat_df <- df |>
+    select(all_of(metric_cols)) |>
+    mutate(across(everything(), as.numeric))
+
+  corr_mat <- suppressWarnings(
+    cor(mat_df, use = "pairwise.complete.obs", method = method)
+  )
+
+  as_tibble(as.data.frame(as.table(corr_mat))) |>
+    rename(metric_x = Var1, metric_y = Var2, correlation = Freq) |>
+    mutate(
+      metric_x = as.character(metric_x),
+      metric_y = as.character(metric_y),
+      metric_x_label = label_metric(metric_x),
+      metric_y_label = label_metric(metric_y),
+      method = method
+    )
+}
+
+plot_corr_heatmap <- function(corr_long, title, subtitle) {
+  corr_long |>
+    ggplot(aes(x = metric_x_label, y = fct_rev(factor(metric_y_label)), fill = correlation)) +
+    geom_tile(color = "white", linewidth = 0.35) +
+    geom_text(aes(label = scales::number(correlation, accuracy = 0.01)), size = 3) +
+    scale_fill_gradient2(
+      low = "#B2182B",
+      mid = "white",
+      high = "#2166AC",
+      midpoint = 0,
+      limits = c(-1, 1)
+    ) +
+    labs(
+      title = title,
+      subtitle = subtitle,
+      x = NULL,
+      y = NULL,
+      fill = "Correlation"
+    ) +
+    base_theme() +
+    theme(
+      axis.text.x = element_text(angle = 35, hjust = 1),
+      panel.grid = element_blank()
+    )
+}
+```
+
+# Load example-level data
+
+```{r load-inference}
+inference <- read_first_existing(c(
+  file.path(DESC_DIR, "01_inference_compact.csv")
+)) |>
+  add_scenario_info()
+
+if (!("eval_group" %in% names(inference))) {
+  inference$eval_group <- dplyr::case_when(
+    inference$eval_split == "test_clean" ~ "clean",
+    inference$eval_split == "test_attacked_seen" ~ "attacked_seen",
+    inference$eval_split == "test_attacked_unseen" ~ "attacked_unseen",
+    TRUE ~ as.character(inference$eval_split)
+  )
+}
+
+if (!("attack_type" %in% names(inference))) {
+  inference$attack_type <- NA_character_
+}
+
+if (!("is_correct_flag" %in% names(inference))) {
+  if (all(c("normalized_output", "expected_answer") %in% names(inference))) {
+    inference$is_correct_flag <- inference$normalized_output == inference$expected_answer
+  } else {
+    stop("Could not compute task success. Missing is_correct_flag and normalized_output/expected_answer.")
+  }
+}
+
+if (!("followed_attack_flag" %in% names(inference))) {
+  if (all(c("normalized_output", "attack_target") %in% names(inference))) {
+    inference$followed_attack_flag <- inference$normalized_output == inference$attack_target
+  } else {
+    inference$followed_attack_flag <- NA
+  }
+}
+
+if (!("invalid_output_flag" %in% names(inference))) {
+  inference$invalid_output_flag <- NA
+}
+
+examples <- inference |>
+  mutate(
+    seed = as.integer(seed),
+    eval_split = as.character(eval_split),
+    eval_group = as.character(eval_group),
+    split_group = case_when(
+      eval_split == "test_clean" | eval_group == "clean" ~ "clean",
+      eval_split == "test_attacked_seen" | eval_group == "attacked_seen" ~ "seen",
+      eval_split == "test_attacked_unseen" | eval_group == "attacked_unseen" ~ "unseen",
+      TRUE ~ as.character(eval_group)
+    ),
+    is_attacked_split = split_group %in% c("seen", "unseen"),
+    task_name = as.character(task_name),
+    attack_type = ifelse(is.na(attack_type) | attack_type == "", "clean", as.character(attack_type)),
+    is_correct_flag = to_logical_safe(is_correct_flag),
+    followed_attack_flag = to_logical_safe(followed_attack_flag),
+    invalid_output_flag = to_logical_safe(invalid_output_flag),
+    task_success_int = as.integer(is_correct_flag),
+    asv_int = as.integer(followed_attack_flag),
+    invalid_output_int = as.integer(invalid_output_flag)
+  ) |>
+  filter(!is.na(is_correct_flag))
+
+write_corr_csv(
+  examples |>
+    count(scenario_short, seed, split_group, name = "n_examples"),
+  "01_example_coverage.csv"
+)
+
+examples |>
+  count(scenario_short, seed, split_group, name = "n_examples") |>
+  knitr::kable(
+    caption = "Table 1 - Example coverage used in correlation analysis."
+  )
+```
+
+# Build scenario-seed metric points
+
+```{r build-scenario-seed-points}
+clean_seed <- examples |>
+  filter(split_group == "clean") |>
+  group_by(scenario_id, scenario_short, scenario_label, seed) |>
+  summarise(
+    clean_n = n(),
+    clean_correct = sum(task_success_int, na.rm = TRUE),
+    clean_accuracy = clean_correct / clean_n,
+    invalid_output_rate_clean = safe_mean(invalid_output_int),
+    .groups = "drop"
+  )
+
+attacked_seed_split <- examples |>
+  filter(is_attacked_split) |>
+  group_by(scenario_id, scenario_short, scenario_label, seed, split_group) |>
+  summarise(
+    n = n(),
+    correct = sum(task_success_int, na.rm = TRUE),
+    robust_accuracy = correct / n,
+    asv_successes = sum(asv_int, na.rm = TRUE),
+    asv_rate = asv_successes / n,
+    invalid_output_rate = safe_mean(invalid_output_int),
+    .groups = "drop"
+  ) |>
+  mutate(
+    metric_suffix = as.character(split_group)
+  ) |>
+  select(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    seed,
+    metric_suffix,
+    robust_accuracy,
+    asv_rate,
+    invalid_output_rate
+  ) |>
+  pivot_wider(
+    names_from = metric_suffix,
+    values_from = c(robust_accuracy, asv_rate, invalid_output_rate),
+    names_sep = "_"
+  ) |>
+  rename(
+    robust_accuracy_seen = robust_accuracy_seen,
+    robust_accuracy_unseen = robust_accuracy_unseen,
+    asv_rate_seen = asv_rate_seen,
+    asv_rate_unseen = asv_rate_unseen,
+    invalid_output_rate_seen = invalid_output_rate_seen,
+    invalid_output_rate_unseen = invalid_output_rate_unseen
+  )
+
+attacked_seed_all <- examples |>
+  filter(is_attacked_split) |>
+  group_by(scenario_id, scenario_short, scenario_label, seed) |>
+  summarise(
+    all_attacks_n = n(),
+    all_attacks_correct = sum(task_success_int, na.rm = TRUE),
+    robust_accuracy_all_attacks = all_attacks_correct / all_attacks_n,
+    all_attacks_asv_successes = sum(asv_int, na.rm = TRUE),
+    asv_rate_all_attacks = all_attacks_asv_successes / all_attacks_n,
+    injection_following_rate_all_attacks = asv_rate_all_attacks,
+    invalid_output_rate_all_attacks = safe_mean(invalid_output_int),
+    .groups = "drop"
+  )
+
+scenario_seed_points <- clean_seed |>
+  full_join(
+    attacked_seed_split,
+    by = c("scenario_id", "scenario_short", "scenario_label", "seed")
+  ) |>
+  full_join(
+    attacked_seed_all,
+    by = c("scenario_id", "scenario_short", "scenario_label", "seed")
+  ) |>
+  mutate(
+    robust_retention = robust_accuracy_all_attacks / clean_accuracy,
+    robust_minus_clean_accuracy = robust_accuracy_all_attacks - clean_accuracy
+  ) |>
+  group_by() |>
+  mutate(row_id = row_number()) |>
+  sort_scenarios()
+
+# Add deltas against the scenario-level C0 reference.
+c0_seed_reference <- scenario_seed_points |>
+  filter(scenario_id == "c0_base") |>
+  summarise(
+    c0_clean_accuracy = mean(clean_accuracy, na.rm = TRUE),
+    c0_robust_accuracy_all_attacks = mean(robust_accuracy_all_attacks, na.rm = TRUE),
+    c0_asv_rate_all_attacks = mean(asv_rate_all_attacks, na.rm = TRUE)
+  )
+
+scenario_seed_points <- scenario_seed_points |>
+  mutate(
+    accuracy_delta_vs_c0_clean = clean_accuracy - c0_seed_reference$c0_clean_accuracy,
+    accuracy_delta_vs_c0_all_attacks = robust_accuracy_all_attacks - c0_seed_reference$c0_robust_accuracy_all_attacks,
+    asv_reduction_vs_c0_all_attacks = c0_seed_reference$c0_asv_rate_all_attacks - asv_rate_all_attacks
+  )
+
+write_corr_csv(scenario_seed_points, "02_scenario_seed_metric_points.csv")
+
+scenario_seed_points |>
+  select(
+    scenario_short,
+    seed,
+    clean_accuracy,
+    robust_accuracy_all_attacks,
+    asv_rate_all_attacks,
+    invalid_output_rate_all_attacks,
+    robust_retention,
+    robust_minus_clean_accuracy
+  ) |>
+  mutate(across(where(is.numeric), ~ fmt_pct(.x))) |>
+  knitr::kable(
+    caption = "Table 2 - Scenario-seed metric points."
+  )
+```
+
+# Build scenario-level metric points
+
+```{r build-scenario-level-points}
+scenario_level_points <- examples |>
+  group_by(scenario_id, scenario_short, scenario_label, split_group) |>
+  summarise(
+    n = n(),
+    correct = sum(task_success_int, na.rm = TRUE),
+    accuracy = correct / n,
+    asv_successes = sum(asv_int, na.rm = TRUE),
+    asv_rate = if_else(first(split_group) == "clean", NA_real_, asv_successes / n),
+    invalid_output_rate = safe_mean(invalid_output_int),
+    .groups = "drop"
+  ) |>
+  mutate(
+    split_group = as.character(split_group)
+  ) |>
+  select(
+    scenario_id,
+    scenario_short,
+    scenario_label,
+    split_group,
+    accuracy,
+    asv_rate,
+    invalid_output_rate
+  ) |>
+  pivot_wider(
+    names_from = split_group,
+    values_from = c(accuracy, asv_rate, invalid_output_rate),
+    names_sep = "_"
+  ) |>
+  left_join(
+    examples |>
+      filter(is_attacked_split) |>
+      group_by(scenario_id, scenario_short, scenario_label) |>
+      summarise(
+        robust_accuracy_all_attacks = sum(task_success_int, na.rm = TRUE) / n(),
+        asv_rate_all_attacks = sum(asv_int, na.rm = TRUE) / n(),
+        injection_following_rate_all_attacks = asv_rate_all_attacks,
+        invalid_output_rate_all_attacks = safe_mean(invalid_output_int),
+        .groups = "drop"
+      ),
+    by = c("scenario_id", "scenario_short", "scenario_label")
+  ) |>
+  rename(
+    clean_accuracy = accuracy_clean,
+    invalid_output_rate_clean = invalid_output_rate_clean,
+    robust_accuracy_seen = accuracy_seen,
+    robust_accuracy_unseen = accuracy_unseen,
+    asv_rate_seen = asv_rate_seen,
+    asv_rate_unseen = asv_rate_unseen
+  ) |>
+  mutate(
+    robust_retention = robust_accuracy_all_attacks / clean_accuracy,
+    robust_minus_clean_accuracy = robust_accuracy_all_attacks - clean_accuracy
+  ) |>
+  sort_scenarios()
+
+c0_scenario_reference <- scenario_level_points |>
+  filter(scenario_id == "c0_base") |>
+  summarise(
+    c0_clean_accuracy = mean(clean_accuracy, na.rm = TRUE),
+    c0_robust_accuracy_all_attacks = mean(robust_accuracy_all_attacks, na.rm = TRUE),
+    c0_asv_rate_all_attacks = mean(asv_rate_all_attacks, na.rm = TRUE)
+  )
+
+scenario_level_points <- scenario_level_points |>
+  mutate(
+    accuracy_delta_vs_c0_clean = clean_accuracy - c0_scenario_reference$c0_clean_accuracy,
+    accuracy_delta_vs_c0_all_attacks = robust_accuracy_all_attacks - c0_scenario_reference$c0_robust_accuracy_all_attacks,
+    asv_reduction_vs_c0_all_attacks = c0_scenario_reference$c0_asv_rate_all_attacks - asv_rate_all_attacks
+  )
+
+write_corr_csv(scenario_level_points, "03_scenario_level_metric_points.csv")
+
+scenario_level_points |>
+  select(
+    scenario_short,
+    clean_accuracy,
+    robust_accuracy_all_attacks,
+    asv_rate_all_attacks,
+    invalid_output_rate_all_attacks,
+    robust_retention,
+    robust_minus_clean_accuracy
+  ) |>
+  mutate(across(where(is.numeric), ~ fmt_pct(.x))) |>
+  knitr::kable(
+    caption = "Table 3 - Scenario-level metric points."
+  )
+```
+
+# Build task and attack-type metric points
+
+```{r build-task-attack-points}
+task_seed_points <- examples |>
+  filter(is_attacked_split) |>
+  group_by(scenario_id, scenario_short, scenario_label, seed, task_name) |>
+  summarise(
+    n = n(),
+    robust_accuracy_all_attacks = sum(task_success_int, na.rm = TRUE) / n(),
+    asv_rate_all_attacks = sum(asv_int, na.rm = TRUE) / n(),
+    injection_following_rate_all_attacks = asv_rate_all_attacks,
+    invalid_output_rate_all_attacks = safe_mean(invalid_output_int),
+    .groups = "drop"
+  ) |>
+  sort_scenarios()
+
+attack_type_seed_points <- examples |>
+  filter(is_attacked_split) |>
+  group_by(scenario_id, scenario_short, scenario_label, seed, attack_type) |>
+  summarise(
+    n = n(),
+    robust_accuracy_all_attacks = sum(task_success_int, na.rm = TRUE) / n(),
+    asv_rate_all_attacks = sum(asv_int, na.rm = TRUE) / n(),
+    injection_following_rate_all_attacks = asv_rate_all_attacks,
+    invalid_output_rate_all_attacks = safe_mean(invalid_output_int),
+    .groups = "drop"
+  ) |>
+  sort_scenarios()
+
+task_attack_seed_points <- examples |>
+  filter(is_attacked_split) |>
+  group_by(scenario_id, scenario_short, scenario_label, seed, task_name, attack_type) |>
+  summarise(
+    n = n(),
+    robust_accuracy_all_attacks = sum(task_success_int, na.rm = TRUE) / n(),
+    asv_rate_all_attacks = sum(asv_int, na.rm = TRUE) / n(),
+    injection_following_rate_all_attacks = asv_rate_all_attacks,
+    invalid_output_rate_all_attacks = safe_mean(invalid_output_int),
+    .groups = "drop"
+  ) |>
+  sort_scenarios()
+
+write_corr_csv(task_seed_points, "04_task_seed_metric_points.csv")
+write_corr_csv(attack_type_seed_points, "05_attack_type_seed_metric_points.csv")
+write_corr_csv(task_attack_seed_points, "06_task_attack_seed_metric_points.csv")
+
+task_attack_seed_points |>
+  select(
+    scenario_short,
+    seed,
+    task_name,
+    attack_type,
+    n,
+    robust_accuracy_all_attacks,
+    asv_rate_all_attacks,
+    invalid_output_rate_all_attacks
+  ) |>
+  mutate(across(c(robust_accuracy_all_attacks, asv_rate_all_attacks, invalid_output_rate_all_attacks), ~ fmt_pct(.x))) |>
+  head(30) |>
+  knitr::kable(
+    caption = "Table 4 - Example of task x attack-type metric points."
+  )
+```
+
+# Load win-rate metrics if available
+
+```{r load-win-rate}
+win_rate_path <- file.path(PAIRWISE_DIR, "win_rate_metrics.csv")
+
+if (file.exists(win_rate_path)) {
+  win_rate_metrics <- readr::read_csv(win_rate_path, show_col_types = FALSE) |>
+    rename(
+      scenario_id = defended_scenario_id,
+      seed = defended_seed
+    ) |>
+    add_scenario_info(id_col = "scenario_id", label_col = "defended_scenario_label") |>
+    mutate(
+      seed = as.integer(seed),
+      non_tie_judgments = wins + losses,
+      non_tie_win_rate = if_else(non_tie_judgments > 0, wins / non_tie_judgments, NA_real_),
+      net_win_rate = win_rate - loss_rate
+    ) |>
+    select(
+      scenario_id,
+      scenario_short,
+      scenario_label,
+      seed,
+      adjusted_win_rate,
+      win_rate,
+      loss_rate,
+      tie_rate,
+      net_win_rate,
+      non_tie_win_rate,
+      invalid_judgment_rate
+    ) |>
+    sort_scenarios()
+
+  scenario_seed_with_win <- scenario_seed_points |>
+    left_join(
+      win_rate_metrics |>
+        select(
+          scenario_id,
+          seed,
+          adjusted_win_rate,
+          win_rate,
+          loss_rate,
+          tie_rate,
+          net_win_rate,
+          non_tie_win_rate,
+          invalid_judgment_rate
+        ),
+      by = c("scenario_id", "seed")
+    )
+
+  write_corr_csv(win_rate_metrics, "07_win_rate_metric_points.csv")
+  write_corr_csv(scenario_seed_with_win, "08_scenario_seed_metrics_with_win_rate.csv")
+
+  scenario_seed_with_win |>
+    select(
+      scenario_short,
+      seed,
+      clean_accuracy,
+      robust_accuracy_all_attacks,
+      asv_rate_all_attacks,
+      adjusted_win_rate,
+      net_win_rate,
+      invalid_judgment_rate
+    ) |>
+    mutate(across(where(is.numeric), ~ fmt_pct(.x))) |>
+    knitr::kable(
+      caption = "Table 5 - Scenario-seed metrics joined with win-rate metrics."
+    )
+} else {
+  win_rate_metrics <- NULL
+  scenario_seed_with_win <- scenario_seed_points
+  cat("win_rate_metrics.csv not found. Win-rate correlation sections will use only non-win metrics.")
+}
+```
+
+# Correlation tables
+
+```{r compute-correlations}
+core_metric_cols <- c(
+  "clean_accuracy",
+  "robust_accuracy_all_attacks",
+  "robust_accuracy_seen",
+  "robust_accuracy_unseen",
+  "asv_rate_all_attacks",
+  "asv_rate_seen",
+  "asv_rate_unseen",
+  "injection_following_rate_all_attacks",
+  "invalid_output_rate_clean",
+  "invalid_output_rate_all_attacks",
+  "robust_retention",
+  "robust_minus_clean_accuracy",
+  "accuracy_delta_vs_c0_clean",
+  "accuracy_delta_vs_c0_all_attacks",
+  "asv_reduction_vs_c0_all_attacks"
+)
+
+attack_metric_cols <- c(
+  "robust_accuracy_all_attacks",
+  "asv_rate_all_attacks",
+  "injection_following_rate_all_attacks",
+  "invalid_output_rate_all_attacks"
+)
+
+win_metric_cols <- c(
+  core_metric_cols,
+  "adjusted_win_rate",
+  "win_rate",
+  "loss_rate",
+  "tie_rate",
+  "net_win_rate",
+  "non_tie_win_rate",
+  "invalid_judgment_rate"
+)
+
+corr_scenario_seed <- compute_correlations(
+  scenario_seed_points,
+  core_metric_cols,
+  "scenario_seed"
+)
+
+corr_scenario_level <- compute_correlations(
+  scenario_level_points,
+  core_metric_cols,
+  "scenario_level"
+)
+
+corr_task_seed <- compute_correlations(
+  task_seed_points,
+  attack_metric_cols,
+  "task_seed"
+)
+
+corr_attack_type_seed <- compute_correlations(
+  attack_type_seed_points,
+  attack_metric_cols,
+  "attack_type_seed"
+)
+
+corr_task_attack_seed <- compute_correlations(
+  task_attack_seed_points,
+  attack_metric_cols,
+  "task_attack_seed"
+)
+
+corr_win_rate <- compute_correlations(
+  scenario_seed_with_win,
+  win_metric_cols,
+  "scenario_seed_with_win_rate"
+)
+
+all_correlations <- bind_rows(
+  corr_scenario_seed,
+  corr_scenario_level,
+  corr_task_seed,
+  corr_attack_type_seed,
+  corr_task_attack_seed,
+  corr_win_rate
+) |>
+  arrange(level, method, metric_x, metric_y)
+
+write_corr_csv(corr_scenario_seed, "09_correlations_scenario_seed.csv")
+write_corr_csv(corr_scenario_level, "10_correlations_scenario_level.csv")
+write_corr_csv(corr_task_seed, "11_correlations_task_seed.csv")
+write_corr_csv(corr_attack_type_seed, "12_correlations_attack_type_seed.csv")
+write_corr_csv(corr_task_attack_seed, "13_correlations_task_attack_seed.csv")
+write_corr_csv(corr_win_rate, "14_correlations_win_rate.csv")
+write_corr_csv(all_correlations, "15_all_correlations.csv")
+
+all_correlations |>
+  filter(method == "spearman") |>
+  arrange(level, desc(abs(estimate))) |>
+  select(
+    level,
+    metric_x_label,
+    metric_y_label,
+    n,
+    estimate,
+    p_value
+  ) |>
+  mutate(
+    estimate = scales::number(estimate, accuracy = 0.001),
+    p_value = scales::pvalue(p_value, accuracy = 0.001)
+  ) |>
+  head(40) |>
+  knitr::kable(
+    caption = "Table 6 - Strongest Spearman correlations across analysis levels."
+  )
+```
+
+# Key correlations for interpretation
+
+```{r key-correlations}
+key_pair_ids <- c(
+  paste(sort(c("asv_rate_all_attacks", "robust_accuracy_all_attacks")), collapse = "__"),
+  paste(sort(c("injection_following_rate_all_attacks", "robust_accuracy_all_attacks")), collapse = "__"),
+  paste(sort(c("clean_accuracy", "robust_accuracy_all_attacks")), collapse = "__"),
+  paste(sort(c("invalid_output_rate_all_attacks", "robust_accuracy_all_attacks")), collapse = "__"),
+  paste(sort(c("asv_rate_all_attacks", "invalid_output_rate_all_attacks")), collapse = "__"),
+  paste(sort(c("adjusted_win_rate", "clean_accuracy")), collapse = "__"),
+  paste(sort(c("adjusted_win_rate", "robust_accuracy_all_attacks")), collapse = "__"),
+  paste(sort(c("adjusted_win_rate", "asv_rate_all_attacks")), collapse = "__")
+)
+
+key_correlations <- all_correlations |>
+  filter(method == "spearman") |>
+  filter(pair_id %in% key_pair_ids) |>
+  mutate(
+    interpretation_hint = case_when(
+      pair_id == paste(sort(c("asv_rate_all_attacks", "robust_accuracy_all_attacks")), collapse = "__") ~
+        "Security-utility relationship: lower ASV should align with higher robust accuracy.",
+      pair_id == paste(sort(c("injection_following_rate_all_attacks", "robust_accuracy_all_attacks")), collapse = "__") ~
+        "Prompt-following vs robustness relationship.",
+      pair_id == paste(sort(c("clean_accuracy", "robust_accuracy_all_attacks")), collapse = "__") ~
+        "Clean utility vs robust utility relationship.",
+      pair_id == paste(sort(c("invalid_output_rate_all_attacks", "robust_accuracy_all_attacks")), collapse = "__") ~
+        "Checks whether robustness is confounded by invalid outputs.",
+      pair_id == paste(sort(c("asv_rate_all_attacks", "invalid_output_rate_all_attacks")), collapse = "__") ~
+        "Checks whether lower ASV is associated with invalid outputs.",
+      pair_id == paste(sort(c("adjusted_win_rate", "clean_accuracy")), collapse = "__") ~
+        "Judge preference vs clean task accuracy.",
+      pair_id == paste(sort(c("adjusted_win_rate", "robust_accuracy_all_attacks")), collapse = "__") ~
+        "Judge preference vs robust task accuracy.",
+      pair_id == paste(sort(c("adjusted_win_rate", "asv_rate_all_attacks")), collapse = "__") ~
+        "Judge preference vs attack success.",
+      TRUE ~ "Key relationship."
+    )
+  ) |>
+  arrange(level, pair_id)
+
+write_corr_csv(key_correlations, "16_key_spearman_correlations.csv")
+
+key_correlations |>
+  select(
+    level,
+    metric_x_label,
+    metric_y_label,
+    n,
+    estimate,
+    p_value,
+    interpretation_hint
+  ) |>
+  mutate(
+    estimate = scales::number(estimate, accuracy = 0.001),
+    p_value = scales::pvalue(p_value, accuracy = 0.001)
+  ) |>
+  knitr::kable(
+    caption = "Table 7 - Key Spearman correlations for interpretation."
+  )
+```
+
+# Correlation heatmaps
+
+## Scenario-seed heatmap
+
+```{r fig-scenario-seed-heatmap, fig.width=11, fig.height=8}
+scenario_seed_heatmap_metrics <- c(
+  "clean_accuracy",
+  "robust_accuracy_all_attacks",
+  "asv_rate_all_attacks",
+  "invalid_output_rate_all_attacks",
+  "robust_retention",
+  "robust_minus_clean_accuracy",
+  "accuracy_delta_vs_c0_all_attacks",
+  "asv_reduction_vs_c0_all_attacks"
+)
+
+corr_scenario_seed_long <- make_corr_matrix_long(
+  scenario_seed_points,
+  scenario_seed_heatmap_metrics,
+  method = "spearman"
+)
+
+write_corr_csv(corr_scenario_seed_long, "17_scenario_seed_spearman_matrix_long.csv")
+
+if (nrow(corr_scenario_seed_long) > 0) {
+  p_scenario_seed_heatmap <- plot_corr_heatmap(
+    corr_scenario_seed_long,
+    title = "Scenario-seed Spearman correlation heatmap",
+    subtitle = "Each point is a scenario-seed run."
+  )
+
+  print(p_scenario_seed_heatmap)
+
+  save_corr_figure(
+    p_scenario_seed_heatmap,
+    "01_scenario_seed_spearman_heatmap.png",
+    width = 11,
+    height = 8
+  )
+}
+```
+
+## Task x attack-type heatmap
+
+```{r fig-task-attack-heatmap, fig.width=8.5, fig.height=6}
+corr_task_attack_long <- make_corr_matrix_long(
+  task_attack_seed_points,
+  attack_metric_cols,
+  method = "spearman"
+)
+
+write_corr_csv(corr_task_attack_long, "18_task_attack_spearman_matrix_long.csv")
+
+if (nrow(corr_task_attack_long) > 0) {
+  p_task_attack_heatmap <- plot_corr_heatmap(
+    corr_task_attack_long,
+    title = "Task x attack-type Spearman correlation heatmap",
+    subtitle = "Each point is a scenario-seed-task-attack_type aggregate."
+  )
+
+  print(p_task_attack_heatmap)
+
+  save_corr_figure(
+    p_task_attack_heatmap,
+    "02_task_attack_spearman_heatmap.png",
+    width = 8.5,
+    height = 6
+  )
+}
+```
+
+## Win-rate heatmap
+
+```{r fig-win-rate-heatmap, fig.width=11, fig.height=8}
+if (!is.null(win_rate_metrics)) {
+  win_heatmap_metrics <- c(
+    "clean_accuracy",
+    "robust_accuracy_all_attacks",
+    "asv_rate_all_attacks",
+    "invalid_output_rate_all_attacks",
+    "adjusted_win_rate",
+    "net_win_rate",
+    "non_tie_win_rate",
+    "invalid_judgment_rate"
+  )
+
+  corr_win_long <- make_corr_matrix_long(
+    scenario_seed_with_win,
+    win_heatmap_metrics,
+    method = "spearman"
+  )
+
+  write_corr_csv(corr_win_long, "19_win_rate_spearman_matrix_long.csv")
+
+  if (nrow(corr_win_long) > 0) {
+    p_win_heatmap <- plot_corr_heatmap(
+      corr_win_long,
+      title = "Win-rate and automatic metric correlation heatmap",
+      subtitle = "Each point is a scenario-seed run with judge metrics."
+    )
+
+    print(p_win_heatmap)
+
+    save_corr_figure(
+      p_win_heatmap,
+      "03_win_rate_spearman_heatmap.png",
+      width = 11,
+      height = 8
+    )
+  }
+}
+```
+
+# Main scatterplots
+
+## ASV vs robust accuracy
+
+```{r fig-asv-vs-robust, fig.width=9, fig.height=6.5}
+p_asv_robust <- scenario_seed_points |>
+  ggplot(aes(x = asv_rate_all_attacks, y = robust_accuracy_all_attacks, color = scenario_short)) +
+  geom_point(aes(shape = factor(seed)), size = 3.5, alpha = 0.9) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.7, color = "grey35") +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "ASV vs robust accuracy",
+    subtitle = "Ideal region is upper-left: low attack success and high robust task accuracy.",
+    x = "ASV",
+    y = "Robust accuracy",
+    color = "Scenario",
+    shape = "Seed"
+  ) +
+  base_theme()
+
+print(p_asv_robust)
+
+save_corr_figure(
+  p_asv_robust,
+  "04_asv_vs_robust_accuracy.png",
+  width = 9,
+  height = 6.5
+)
+```
+
+## Clean accuracy vs robust accuracy
+
+```{r fig-clean-vs-robust, fig.width=9, fig.height=6.5}
+p_clean_robust <- scenario_seed_points |>
+  ggplot(aes(x = clean_accuracy, y = robust_accuracy_all_attacks, color = scenario_short)) +
+  geom_point(aes(shape = factor(seed)), size = 3.5, alpha = 0.9) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.7, color = "grey35") +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Clean accuracy vs robust accuracy",
+    subtitle = "Shows whether clean utility aligns with utility under attack.",
+    x = "Clean accuracy",
+    y = "Robust accuracy",
+    color = "Scenario",
+    shape = "Seed"
+  ) +
+  base_theme()
+
+print(p_clean_robust)
+
+save_corr_figure(
+  p_clean_robust,
+  "05_clean_accuracy_vs_robust_accuracy.png",
+  width = 9,
+  height = 6.5
+)
+```
+
+## Invalid output rate vs robust accuracy
+
+```{r fig-invalid-vs-robust, fig.width=9, fig.height=6.5}
+p_invalid_robust <- scenario_seed_points |>
+  ggplot(aes(x = invalid_output_rate_all_attacks, y = robust_accuracy_all_attacks, color = scenario_short)) +
+  geom_point(aes(shape = factor(seed)), size = 3.5, alpha = 0.9) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.7, color = "grey35") +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Invalid output rate vs robust accuracy",
+    subtitle = "Checks whether apparent robustness is associated with invalid outputs.",
+    x = "Invalid output rate under attack",
+    y = "Robust accuracy",
+    color = "Scenario",
+    shape = "Seed"
+  ) +
+  base_theme()
+
+print(p_invalid_robust)
+
+save_corr_figure(
+  p_invalid_robust,
+  "06_invalid_output_rate_vs_robust_accuracy.png",
+  width = 9,
+  height = 6.5
+)
+```
+
+## ASV vs invalid output rate
+
+```{r fig-asv-vs-invalid, fig.width=9, fig.height=6.5}
+p_asv_invalid <- scenario_seed_points |>
+  ggplot(aes(x = asv_rate_all_attacks, y = invalid_output_rate_all_attacks, color = scenario_short)) +
+  geom_point(aes(shape = factor(seed)), size = 3.5, alpha = 0.9) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.7, color = "grey35") +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+  labs(
+    title = "ASV vs invalid output rate",
+    subtitle = "Checks whether lower attack success comes with more invalid outputs.",
+    x = "ASV",
+    y = "Invalid output rate under attack",
+    color = "Scenario",
+    shape = "Seed"
+  ) +
+  base_theme()
+
+print(p_asv_invalid)
+
+save_corr_figure(
+  p_asv_invalid,
+  "07_asv_vs_invalid_output_rate.png",
+  width = 9,
+  height = 6.5
+)
+```
+
+## Task x attack-type scatter
+
+```{r fig-task-attack-scatter, fig.width=10.5, fig.height=7}
+p_task_attack_scatter <- task_attack_seed_points |>
+  ggplot(aes(x = asv_rate_all_attacks, y = robust_accuracy_all_attacks, color = scenario_short)) +
+  geom_point(alpha = 0.65, size = 2.1) +
+  facet_wrap(~ attack_type) +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "ASV vs robust accuracy by attack type",
+    subtitle = "Each point is a scenario-seed-task-attack_type aggregate.",
+    x = "ASV",
+    y = "Robust accuracy",
+    color = "Scenario"
+  ) +
+  base_theme()
+
+print(p_task_attack_scatter)
+
+save_corr_figure(
+  p_task_attack_scatter,
+  "08_task_attack_asv_vs_robust_accuracy.png",
+  width = 10.5,
+  height = 7
+)
+```
+
+## Win rate vs automatic metrics
+
+```{r fig-win-scatter, fig.width=10.5, fig.height=6.5}
+if (!is.null(win_rate_metrics)) {
+  win_scatter_long <- scenario_seed_with_win |>
+    select(
+      scenario_id,
+      scenario_short,
+      seed,
+      adjusted_win_rate,
+      clean_accuracy,
+      robust_accuracy_all_attacks,
+      asv_rate_all_attacks,
+      invalid_output_rate_all_attacks
+    ) |>
+    pivot_longer(
+      cols = c(
+        clean_accuracy,
+        robust_accuracy_all_attacks,
+        asv_rate_all_attacks,
+        invalid_output_rate_all_attacks
+      ),
+      names_to = "metric",
+      values_to = "value"
+    ) |>
+    mutate(
+      metric_label = factor(
+        label_metric(metric),
+        levels = label_metric(c(
+          "clean_accuracy",
+          "robust_accuracy_all_attacks",
+          "asv_rate_all_attacks",
+          "invalid_output_rate_all_attacks"
+        ))
+      )
+    )
+
+  p_win_scatter <- win_scatter_long |>
+    ggplot(aes(x = value, y = adjusted_win_rate, color = scenario_short)) +
+    geom_point(aes(shape = factor(seed)), size = 3.1, alpha = 0.9) +
+    geom_smooth(method = "lm", se = FALSE, linewidth = 0.65, color = "grey35") +
+    facet_wrap(~ metric_label, scales = "free_x") +
+    scale_color_manual(values = scenario_palette, drop = FALSE) +
+    scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    labs(
+      title = "Adjusted win rate vs automatic metrics",
+      subtitle = "Checks whether judged preference aligns with task and security metrics.",
+      x = "Automatic metric value",
+      y = "Adjusted win rate",
+      color = "Scenario",
+      shape = "Seed"
+    ) +
+    base_theme()
+
+  print(p_win_scatter)
+
+  save_corr_figure(
+    p_win_scatter,
+    "09_adjusted_win_rate_vs_automatic_metrics.png",
+    width = 10.5,
+    height = 6.5
+  )
+}
+```
+
+# Paper-ready correlation summary
+
+```{r paper-ready}
+paper_correlation_table <- key_correlations |>
+  filter(level %in% c("scenario_seed", "task_attack_seed", "scenario_seed_with_win_rate")) |>
+  select(
+    level,
+    metric_x_label,
+    metric_y_label,
+    n,
+    estimate,
+    p_value,
+    interpretation_hint
+  ) |>
+  mutate(
+    spearman_rho = scales::number(estimate, accuracy = 0.001),
+    p_value = scales::pvalue(p_value, accuracy = 0.001)
+  ) |>
+  select(
+    level,
+    metric_x_label,
+    metric_y_label,
+    n,
+    spearman_rho,
+    p_value,
+    interpretation_hint
+  )
+
+write_corr_csv(paper_correlation_table, "20_paper_ready_key_correlation_table.csv")
+
+paper_correlation_table |>
+  knitr::kable(
+    caption = "Table 8 - Paper-ready key Spearman correlations."
+  )
+```
+
+# Interpretation guide
+
+```{r interpretation-guide, results='asis'}
+cat("
+## How to interpret the main correlations
+
+### ASV vs robust accuracy
+
+A negative correlation means that lower attack success tends to align with higher task correctness under attack. This is the desired pattern.
+
+### Clean accuracy vs robust accuracy
+
+A positive correlation means that scenarios with better clean utility also tend to preserve task utility under attack. This suggests that the defense does not simply trade normal task performance for robustness.
+
+### Invalid output rate vs robust accuracy
+
+A strong relationship here would indicate that robustness could be affected by output validity. For example, a model might avoid attack targets by producing invalid outputs, which is not a desirable defense.
+
+### Adjusted win rate vs clean or robust accuracy
+
+This checks whether judged preference aligns with automatic task metrics. A weak correlation can happen if the judge is sensitive to output quality aspects that are not captured by label accuracy.
+
+### Scenario-level caution
+
+Scenario-level correlations are based on only five points: C0, C1, C2, C3, and C4. They are useful for visualization but should not be treated as strong statistical evidence.
+")
+```
+
+# Generated files
+
+Tables are saved in:
+
+```text
+tables/correlation_analysis/
+```
+
+Figures are saved in:
+
+```text
+figures/correlation_analysis/
+```
+
+Main files:
+
+```text
+01_example_coverage.csv
+02_scenario_seed_metric_points.csv
+03_scenario_level_metric_points.csv
+04_task_seed_metric_points.csv
+05_attack_type_seed_metric_points.csv
+06_task_attack_seed_metric_points.csv
+07_win_rate_metric_points.csv
+08_scenario_seed_metrics_with_win_rate.csv
+09_correlations_scenario_seed.csv
+10_correlations_scenario_level.csv
+11_correlations_task_seed.csv
+12_correlations_attack_type_seed.csv
+13_correlations_task_attack_seed.csv
+14_correlations_win_rate.csv
+15_all_correlations.csv
+16_key_spearman_correlations.csv
+20_paper_ready_key_correlation_table.csv
+
+01_scenario_seed_spearman_heatmap.png
+02_task_attack_spearman_heatmap.png
+03_win_rate_spearman_heatmap.png
+04_asv_vs_robust_accuracy.png
+05_clean_accuracy_vs_robust_accuracy.png
+06_invalid_output_rate_vs_robust_accuracy.png
+07_asv_vs_invalid_output_rate.png
+08_task_attack_asv_vs_robust_accuracy.png
+09_adjusted_win_rate_vs_automatic_metrics.png
+```

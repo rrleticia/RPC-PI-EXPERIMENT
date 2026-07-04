@@ -1,0 +1,1835 @@
+---
+title: "RPC-PI Experiment - Total Pipeline Runtime Analysis"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 10,
+  fig.height = 6,
+  dpi = 300
+)
+
+options(knitr.kable.NA = "-")
+
+required_packages <- c(
+  "tidyverse",
+  "readr",
+  "ggplot2",
+  "scales",
+  "stringr",
+  "forcats",
+  "fs",
+  "here",
+  "knitr",
+  "jsonlite",
+  "lubridate"
+)
+
+missing_packages <- required_packages[!required_packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(scales)
+library(stringr)
+library(forcats)
+library(fs)
+library(here)
+library(knitr)
+library(jsonlite)
+library(lubridate)
+```
+
+# Objective
+
+This R Markdown analyzes the **total runtime cost of the experimental pipeline**.
+
+It combines logs from:
+
+```text
+training
+inference
+metrics
+pairwise_metrics
+statistical_analysis
+error_analysis
+```
+
+The main questions are:
+
+```text
+How long did the complete pipeline take?
+Which stage dominates the runtime?
+How much time was spent in training, inference, pairwise/judge metrics, and analysis?
+How many runs, rows, events, and errors are associated with each stage?
+Where are the main pipeline bottlenecks?
+```
+
+This report is complementary to:
+
+```text
+14_training_time_analysis.Rmd
+15_inference_time_analysis.Rmd
+```
+
+The focus here is not only model cost, but **end-to-end experiment cost**.
+
+# Expected folder structure
+
+This Rmd expects the logs extracted into one of these locations:
+
+```text
+data/logs/
+logs/
+```
+
+If `logs.zip` exists in the project root or inside `data/`, this Rmd tries to extract it automatically to `data/`.
+
+# Paths
+
+```{r paths}
+OUT_TABLE_DIR <- here::here("tables", "pipeline_runtime_analysis")
+OUT_FIG_DIR <- here::here("figures", "pipeline_runtime_analysis")
+
+fs::dir_create(OUT_TABLE_DIR)
+fs::dir_create(OUT_FIG_DIR)
+
+# Try to extract logs.zip automatically if needed.
+if (!dir.exists(here::here("data", "logs")) && file.exists(here::here("logs.zip"))) {
+  dir.create(here::here("data"), showWarnings = FALSE)
+  unzip(here::here("logs.zip"), exdir = here::here("data"))
+}
+
+if (!dir.exists(here::here("data", "logs")) && file.exists(here::here("data", "logs.zip"))) {
+  dir.create(here::here("data"), showWarnings = FALSE)
+  unzip(here::here("data", "logs.zip"), exdir = here::here("data"))
+}
+
+candidate_logs_dirs <- c(
+  here::here("data", "logs"),
+  here::here("logs")
+)
+
+LOGS_DIR <- candidate_logs_dirs[dir.exists(candidate_logs_dirs)][1]
+
+if (is.na(LOGS_DIR)) {
+  stop(
+    "Could not find logs directory. Expected one of:\n",
+    paste(candidate_logs_dirs, collapse = "\n"),
+    "\nOr place logs.zip in the project root or data/."
+  )
+}
+```
+
+# Helper functions
+
+```{r helpers}
+`%||%` <- function(x, y) {
+  if (is.null(x) || length(x) == 0) y else x
+}
+
+scenario_order <- c(
+  "c0_base",
+  "c1_struq_format_only",
+  "c2_struq_sft",
+  "c3_secalign_dpo",
+  "c4_ih_sft"
+)
+
+scenario_labels <- tibble(
+  scenario_id = scenario_order,
+  scenario_short = c("C0", "C1", "C2", "C3", "C4"),
+  scenario_label = c(
+    "C0 - Base model",
+    "C1 - StruQ format-only",
+    "C2 - StruQ-like SFT",
+    "C3 - SecAlign-like DPO",
+    "C4 - Instruction-Hierarchy-like SFT"
+  )
+)
+
+scenario_palette <- c(
+  C0 = "#7F7F7F",
+  C1 = "#D55E00",
+  C2 = "#0072B2",
+  C3 = "#CC79A7",
+  C4 = "#009E73"
+)
+
+stage_order <- c(
+  "training",
+  "inference",
+  "metrics",
+  "pairwise_metrics",
+  "statistical_analysis",
+  "error_analysis"
+)
+
+stage_labels <- c(
+  training = "Training",
+  inference = "Inference",
+  metrics = "Metrics",
+  pairwise_metrics = "Pairwise metrics",
+  statistical_analysis = "Statistical analysis",
+  error_analysis = "Error analysis"
+)
+
+stage_palette <- c(
+  training = "#0072B2",
+  inference = "#009E73",
+  metrics = "#E69F00",
+  pairwise_metrics = "#CC79A7",
+  statistical_analysis = "#56B4E9",
+  error_analysis = "#D55E00"
+)
+
+sort_stages <- function(df) {
+  df |>
+    mutate(
+      stage = factor(as.character(stage), levels = stage_order),
+      stage_label = factor(
+        ifelse(is.na(stage_labels[as.character(stage)]), as.character(stage), stage_labels[as.character(stage)]),
+        levels = stage_labels[stage_order]
+      )
+    ) |>
+    arrange(stage)
+}
+
+sort_scenarios <- function(df) {
+  df |>
+    mutate(
+      scenario_id = factor(as.character(scenario_id), levels = scenario_order),
+      scenario_short = factor(as.character(scenario_short), levels = c("C0", "C1", "C2", "C3", "C4"))
+    ) |>
+    arrange(scenario_id)
+}
+
+add_scenario_info <- function(df) {
+  if (!("scenario_id" %in% names(df))) {
+    df$scenario_id <- NA_character_
+  }
+
+  out <- df |>
+    mutate(scenario_id = as.character(scenario_id)) |>
+    left_join(scenario_labels, by = "scenario_id", suffix = c("", "_lookup"))
+
+  if (!("scenario_label" %in% names(out))) {
+    out$scenario_label <- out$scenario_id
+  }
+
+  if ("scenario_label_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_label = coalesce(
+          as.character(scenario_label),
+          as.character(scenario_label_lookup)
+        )
+      )
+  }
+
+  if (!("scenario_short" %in% names(out))) {
+    out$scenario_short <- NA_character_
+  }
+
+  if ("scenario_short_lookup" %in% names(out)) {
+    out <- out |>
+      mutate(
+        scenario_short = coalesce(
+          as.character(scenario_short),
+          as.character(scenario_short_lookup)
+        )
+      )
+  }
+
+  out |>
+    mutate(
+      scenario_short = ifelse(
+        is.na(scenario_short),
+        recode(
+          as.character(scenario_id),
+          c0_base = "C0",
+          c1_struq_format_only = "C1",
+          c2_struq_sft = "C2",
+          c3_secalign_dpo = "C3",
+          c4_ih_sft = "C4",
+          .default = as.character(scenario_id)
+        ),
+        scenario_short
+      )
+    ) |>
+    select(-any_of(c("scenario_label_lookup", "scenario_short_lookup"))) |>
+    sort_scenarios()
+}
+
+parse_time_utc <- function(x) {
+  lubridate::ymd_hms(x, tz = "UTC", quiet = TRUE)
+}
+
+safe_mean <- function(x) {
+  if (sum(!is.na(x)) == 0) return(NA_real_)
+  mean(x, na.rm = TRUE)
+}
+
+safe_sd <- function(x) {
+  if (sum(!is.na(x)) <= 1) return(NA_real_)
+  sd(x, na.rm = TRUE)
+}
+
+fmt_duration <- function(seconds) {
+  ifelse(
+    is.na(seconds),
+    NA_character_,
+    paste0(
+      floor(seconds / 3600), "h ",
+      floor((seconds %% 3600) / 60), "m ",
+      round(seconds %% 60), "s"
+    )
+  )
+}
+
+fmt_number <- function(x, accuracy = 0.01) {
+  scales::number(x, accuracy = accuracy, big.mark = ",")
+}
+
+fmt_pct <- function(x, accuracy = 0.1) {
+  scales::percent(x, accuracy = accuracy)
+}
+
+base_theme <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      legend.position = "bottom",
+      plot.title.position = "plot",
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey30"),
+      panel.grid.minor = element_blank(),
+      axis.title = element_text(face = "bold")
+    )
+}
+
+sanitize_for_csv <- function(df) {
+  df <- as_tibble(df)
+  n_rows <- nrow(df)
+
+  value_to_text <- function(value) {
+    if (is.null(value) || length(value) == 0) {
+      return(NA_character_)
+    }
+
+    tryCatch(
+      as.character(jsonlite::toJSON(value, auto_unbox = TRUE, null = "null")),
+      error = function(e) paste(capture.output(str(value)), collapse = " ")
+    )
+  }
+
+  for (nm in names(df)) {
+    col <- df[[nm]]
+
+    if (is.data.frame(col)) {
+      if (nrow(col) == n_rows) {
+        df[[nm]] <- purrr::map_chr(
+          seq_len(n_rows),
+          function(i) value_to_text(as.list(col[i, , drop = FALSE]))
+        )
+      } else {
+        df[[nm]] <- rep(value_to_text(col), n_rows)
+      }
+    } else if (is.matrix(col) || is.array(col)) {
+      mat <- as.matrix(col)
+
+      if (nrow(mat) == n_rows) {
+        df[[nm]] <- apply(
+          mat,
+          1,
+          function(row) paste(as.character(row), collapse = " | ")
+        )
+      } else {
+        df[[nm]] <- rep(value_to_text(mat), n_rows)
+      }
+    } else if (is.list(col)) {
+      if (length(col) == n_rows) {
+        df[[nm]] <- purrr::map_chr(col, value_to_text)
+      } else if (length(col) == 1) {
+        df[[nm]] <- rep(value_to_text(col[[1]]), n_rows)
+      } else {
+        df[[nm]] <- rep(value_to_text(col), n_rows)
+      }
+    }
+  }
+
+  df
+}
+
+write_pipeline_csv <- function(df, filename) {
+  safe_df <- sanitize_for_csv(df)
+  readr::write_csv(safe_df, file.path(OUT_TABLE_DIR, filename))
+  invisible(df)
+}
+
+save_pipeline_figure <- function(plot, filename, width = 10, height = 6) {
+  ggsave(
+    file.path(OUT_FIG_DIR, filename),
+    plot = plot,
+    width = width,
+    height = height,
+    dpi = 320,
+    bg = "white"
+  )
+  invisible(plot)
+}
+
+replace_null_columns <- function(x) {
+  if (!is.list(x)) {
+    return(x)
+  }
+
+  n <- 1
+  non_null_lengths <- purrr::map_int(
+    x,
+    function(value) {
+      if (is.null(value)) {
+        0L
+      } else if (is.data.frame(value)) {
+        nrow(value)
+      } else {
+        length(value)
+      }
+    }
+  )
+
+  if (any(non_null_lengths > 0)) {
+    n <- max(non_null_lengths)
+  }
+
+  purrr::map(
+    x,
+    function(value) {
+      if (is.null(value)) {
+        rep(NA_character_, n)
+      } else {
+        value
+      }
+    }
+  )
+}
+
+as_tibble_json_safe <- function(x) {
+  if (is.null(x)) {
+    return(tibble())
+  }
+
+  if (is.data.frame(x)) {
+    x <- replace_null_columns(x)
+    return(tibble::as_tibble(x))
+  }
+
+  if (is.list(x)) {
+    x <- replace_null_columns(x)
+    return(tibble::as_tibble(x))
+  }
+
+  tibble(value = x)
+}
+
+read_jsonl_robust <- function(path, stage_name, bad_lines_filename = "00_bad_jsonl_lines.csv") {
+  if (!file.exists(path)) {
+    return(tibble())
+  }
+
+  lines <- readLines(path, warn = FALSE, encoding = "UTF-8")
+
+  if (length(lines) == 0) {
+    return(tibble())
+  }
+
+  parsed <- vector("list", length(lines))
+  bad_lines <- list()
+
+  for (i in seq_along(lines)) {
+    line <- lines[[i]]
+
+    if (is.na(line) || trimws(line) == "") {
+      next
+    }
+
+    obj <- tryCatch(
+      jsonlite::fromJSON(line, flatten = TRUE),
+      error = function(e) {
+        bad_lines[[length(bad_lines) + 1]] <<- tibble(
+          stage = stage_name,
+          line_number = i,
+          error = conditionMessage(e),
+          line_prefix = substr(line, 1, 250)
+        )
+        NULL
+      }
+    )
+
+    if (!is.null(obj)) {
+      parsed[[i]] <- as_tibble_json_safe(obj)
+    }
+  }
+
+  parsed <- parsed[!vapply(parsed, is.null, logical(1))]
+  bad_lines_df <- dplyr::bind_rows(bad_lines)
+
+  if (nrow(bad_lines_df) > 0) {
+    readr::write_csv(
+      bad_lines_df,
+      file.path(OUT_TABLE_DIR, bad_lines_filename)
+    )
+  }
+
+  if (length(parsed) == 0) {
+    return(tibble())
+  }
+
+  dplyr::bind_rows(parsed) |>
+    mutate(stage = stage_name, .before = 1)
+}
+
+get_scalar <- function(obj, field, default = NA) {
+  value <- obj[[field]]
+
+  if (is.null(value) || length(value) == 0) {
+    return(default)
+  }
+
+  if (is.data.frame(value)) {
+    if (nrow(value) == 0 || ncol(value) == 0) return(default)
+    return(value[[1]][[1]])
+  }
+
+  if (is.list(value) && length(value) == 1 && !is.null(value[[1]])) {
+    return(value[[1]])
+  }
+
+  value[[1]]
+}
+
+get_nested_scalar <- function(obj, parent, child, default = NA) {
+  flat_name <- paste0(parent, ".", child)
+
+  flat_value <- obj[[flat_name]]
+
+  if (!is.null(flat_value) && length(flat_value) > 0) {
+    return(flat_value[[1]])
+  }
+
+  parent_value <- obj[[parent]]
+
+  if (!is.null(parent_value)) {
+    if (is.data.frame(parent_value) && child %in% names(parent_value)) {
+      return(parent_value[[child]][[1]])
+    }
+
+    if (is.list(parent_value) && !is.null(parent_value[[child]])) {
+      return(parent_value[[child]][[1]])
+    }
+  }
+
+  default
+}
+
+read_json_safe <- function(path) {
+  tryCatch(
+    jsonlite::fromJSON(path, flatten = TRUE),
+    error = function(e) NULL
+  )
+}
+```
+
+# Discover log files
+
+```{r discover-logs}
+stage_paths <- tibble(
+  stage = stage_order,
+  stage_label = stage_labels[stage_order],
+  stage_dir = file.path(LOGS_DIR, stage_order)
+) |>
+  mutate(
+    dir_exists = dir.exists(stage_dir),
+    event_path = case_when(
+      stage == "training" ~ file.path(stage_dir, "04_run_training_events.jsonl"),
+      stage == "inference" ~ file.path(stage_dir, "05_run_inference_events.jsonl"),
+      stage == "metrics" ~ file.path(stage_dir, "06_compute_metrics_events.jsonl"),
+      stage == "pairwise_metrics" ~ file.path(stage_dir, "07_pairwise_and_injected_metrics_events.jsonl"),
+      stage == "statistical_analysis" ~ file.path(stage_dir, "08_statistical_analysis_events.jsonl"),
+      stage == "error_analysis" ~ file.path(stage_dir, "09_error_analysis_events.jsonl"),
+      TRUE ~ NA_character_
+    ),
+    summary_path = case_when(
+      stage == "training" ~ file.path(stage_dir, "04_run_training_summary.json"),
+      stage == "inference" ~ file.path(stage_dir, "05_run_inference_summary.json"),
+      stage == "metrics" ~ file.path(stage_dir, "06_compute_metrics_summary_full.json"),
+      stage == "pairwise_metrics" ~ file.path(stage_dir, "07_pairwise_and_injected_metrics_summary.json"),
+      stage == "statistical_analysis" ~ file.path(stage_dir, "08_statistical_analysis_summary_full.json"),
+      stage == "error_analysis" ~ file.path(stage_dir, "09_error_analysis_summary.json"),
+      TRUE ~ NA_character_
+    ),
+    event_exists = file.exists(event_path),
+    summary_exists = file.exists(summary_path)
+  ) |>
+  sort_stages()
+
+write_pipeline_csv(stage_paths, "01_stage_paths.csv")
+
+stage_paths |>
+  knitr::kable(
+    caption = "Table 1 - Discovered pipeline log files."
+  )
+```
+
+# Load all stage events
+
+```{r load-events}
+all_events <- purrr::map2_dfr(
+  stage_paths$event_path,
+  stage_paths$stage,
+  function(path, stage_name) {
+    read_jsonl_robust(
+      path = path,
+      stage_name = stage_name,
+      bad_lines_filename = "00_bad_pipeline_event_lines.csv"
+    )
+  }
+)
+
+if (nrow(all_events) == 0) {
+  stop("No pipeline events could be loaded.")
+}
+
+events_raw_names <- names(all_events)
+
+if (!("scenario_id" %in% events_raw_names) && "scenario" %in% events_raw_names) {
+  all_events <- all_events |>
+    rename(scenario_id = scenario)
+} else if ("scenario" %in% events_raw_names) {
+  all_events <- all_events |>
+    mutate(
+      scenario_id = coalesce(
+        as.character(scenario_id),
+        as.character(scenario)
+      )
+    )
+}
+
+if (!("seed" %in% names(all_events))) {
+  all_events$seed <- NA_integer_
+}
+
+if (!("event_type" %in% names(all_events))) {
+  all_events$event_type <- NA_character_
+}
+
+if (!("timestamp_utc" %in% names(all_events))) {
+  stop("Events do not contain timestamp_utc.")
+}
+
+if (!("run_mode" %in% names(all_events))) {
+  all_events$run_mode <- NA_character_
+}
+
+if (!("rows" %in% names(all_events))) {
+  all_events$rows <- NA_real_
+}
+
+if (!("elapsed_seconds" %in% names(all_events))) {
+  all_events$elapsed_seconds <- NA_real_
+}
+
+all_events <- all_events |>
+  mutate(
+    stage = as.character(stage),
+    event_type = as.character(event_type),
+    timestamp = parse_time_utc(timestamp_utc),
+    scenario_id = as.character(scenario_id),
+    seed = suppressWarnings(as.integer(seed)),
+    run_mode = as.character(run_mode),
+    rows = suppressWarnings(as.numeric(rows)),
+    elapsed_seconds = suppressWarnings(as.numeric(elapsed_seconds))
+  ) |>
+  add_scenario_info() |>
+  sort_stages()
+
+write_pipeline_csv(all_events, "02_all_pipeline_events.csv")
+
+all_events |>
+  count(stage_label, event_type, name = "n_events") |>
+  arrange(stage_label, desc(n_events)) |>
+  knitr::kable(
+    caption = "Table 2 - Event counts by stage."
+  )
+```
+
+# Stage timelines from event logs
+
+```{r stage-timelines}
+stage_event_summary <- all_events |>
+  group_by(stage, stage_label) |>
+  summarise(
+    n_events = n(),
+    first_event_utc = min(timestamp, na.rm = TRUE),
+    last_event_utc = max(timestamp, na.rm = TRUE),
+    observed_stage_seconds = as.numeric(difftime(last_event_utc, first_event_utc, units = "secs")),
+    observed_stage_minutes = observed_stage_seconds / 60,
+    observed_stage_hours = observed_stage_seconds / 3600,
+    event_elapsed_seconds_sum = sum(elapsed_seconds, na.rm = TRUE),
+    event_rows_sum = sum(rows, na.rm = TRUE),
+    n_event_rows_with_elapsed = sum(!is.na(elapsed_seconds)),
+    n_event_rows_with_rows = sum(!is.na(rows)),
+    .groups = "drop"
+  ) |>
+  sort_stages()
+
+pipeline_start <- min(stage_event_summary$first_event_utc, na.rm = TRUE)
+pipeline_end <- max(stage_event_summary$last_event_utc, na.rm = TRUE)
+pipeline_wall_clock_seconds <- as.numeric(difftime(pipeline_end, pipeline_start, units = "secs"))
+
+stage_event_summary <- stage_event_summary |>
+  mutate(
+    share_of_wall_clock = observed_stage_seconds / pipeline_wall_clock_seconds,
+    observed_duration_label = fmt_duration(observed_stage_seconds)
+  )
+
+write_pipeline_csv(stage_event_summary, "03_stage_event_timeline_summary.csv")
+
+stage_event_summary |>
+  select(
+    stage_label,
+    n_events,
+    first_event_utc,
+    last_event_utc,
+    observed_stage_minutes,
+    observed_stage_hours,
+    share_of_wall_clock,
+    event_elapsed_seconds_sum,
+    event_rows_sum,
+    observed_duration_label
+  ) |>
+  mutate(
+    observed_stage_minutes = fmt_number(observed_stage_minutes),
+    observed_stage_hours = fmt_number(observed_stage_hours),
+    share_of_wall_clock = fmt_pct(share_of_wall_clock),
+    event_elapsed_seconds_sum = fmt_number(event_elapsed_seconds_sum),
+    event_rows_sum = fmt_number(event_rows_sum, accuracy = 1)
+  ) |>
+  knitr::kable(
+    caption = "Table 3 - Stage timeline summary based on event timestamps."
+  )
+```
+
+# Load summary JSON files
+
+```{r load-summaries}
+summary_records <- purrr::pmap_dfr(
+  stage_paths |>
+    select(stage, stage_label, summary_path, summary_exists),
+  function(stage, stage_label, summary_path, summary_exists) {
+    if (!isTRUE(summary_exists)) {
+      return(tibble(
+        stage = stage,
+        stage_label = stage_label,
+        summary_exists = FALSE
+      ))
+    }
+
+    obj <- read_json_safe(summary_path)
+
+    if (is.null(obj)) {
+      return(tibble(
+        stage = stage,
+        stage_label = stage_label,
+        summary_exists = TRUE,
+        summary_parse_ok = FALSE
+      ))
+    }
+
+    counts <- obj$counts %||% list()
+    outputs <- obj$outputs %||% list()
+
+    tibble(
+      stage = stage,
+      stage_label = stage_label,
+      summary_exists = TRUE,
+      summary_parse_ok = TRUE,
+      notebook = as.character(obj$notebook %||% NA_character_),
+      created_at_utc = as.character(obj$created_at_utc %||% NA_character_),
+      run_mode = as.character(obj$run_mode %||% NA_character_),
+      base_model_id = as.character(obj$base_model_id %||% obj$base_model %||% NA_character_),
+      judge_model_id = as.character(obj$judge_model_id %||% NA_character_),
+      num_inference_rows = as.numeric(obj$num_inference_rows %||% NA_real_),
+      total_inference_rows = as.numeric(obj$total_inference_rows %||% NA_real_),
+      num_scenarios = as.numeric(obj$num_scenarios %||% NA_real_),
+      num_scenario_seed_runs = as.numeric(obj$num_scenario_seed_runs %||% NA_real_),
+      training_results_count = length(obj$training_results %||% list()),
+      inference_results_count = length(obj$inference_results %||% list()),
+      result_files_count = length(obj$result_files %||% list()),
+      input_files_count = length(obj$input_files %||% list()),
+      generated_files_count = length(obj$generated_files %||% list()),
+      metrics_computed_count = length(obj$metrics_computed %||% list()),
+      metrics_available_count = length(obj$metrics_available %||% list()),
+      outputs_count = length(outputs),
+      counts_injected_only_rows = as.numeric(counts$injected_only_rows %||% NA_real_),
+      counts_mr_paired_rows = as.numeric(counts$mr_paired_rows %||% NA_real_),
+      counts_win_rate_pairs = as.numeric(counts$win_rate_pairs %||% NA_real_),
+      counts_win_rate_judgments = as.numeric(counts$win_rate_judgments %||% NA_real_),
+      counts_unified_run_rows = as.numeric(counts$unified_run_rows %||% NA_real_),
+      counts_scenario_metric_summary_rows = as.numeric(counts$scenario_metric_summary_rows %||% NA_real_),
+      coverage_rows = as.numeric(obj$coverage_rows %||% NA_real_),
+      failure_taxonomy_rows = as.numeric(obj$failure_taxonomy_rows %||% NA_real_),
+      paired_vs_c0_rows = as.numeric(obj$paired_vs_c0_rows %||% NA_real_),
+      invalid_output_rows = as.numeric(obj$invalid_output_rows %||% NA_real_),
+      summary_path = summary_path
+    )
+  }
+) |>
+  sort_stages()
+
+write_pipeline_csv(summary_records, "04_stage_summary_json_records.csv")
+
+summary_records |>
+  select(
+    stage_label,
+    notebook,
+    created_at_utc,
+    run_mode,
+    base_model_id,
+    judge_model_id,
+    training_results_count,
+    inference_results_count,
+    result_files_count,
+    input_files_count,
+    generated_files_count,
+    metrics_computed_count,
+    outputs_count
+  ) |>
+  knitr::kable(
+    caption = "Table 4 - Summary JSON overview by stage."
+  )
+```
+
+# Load run metadata files
+
+```{r load-run-metadata}
+all_run_metadata_files <- fs::dir_ls(LOGS_DIR, recurse = TRUE, regexp = "run_metadata\\.json$")
+
+read_generic_run_metadata <- function(path) {
+  obj <- read_json_safe(path)
+
+  if (is.null(obj)) {
+    return(tibble(
+      metadata_path = as.character(path),
+      parse_ok = FALSE
+    ))
+  }
+
+  path_chr <- as.character(path)
+
+  stage <- case_when(
+    str_detect(path_chr, "[/\\\\]training[/\\\\]") ~ "training",
+    str_detect(path_chr, "[/\\\\]inference[/\\\\]") ~ "inference",
+    str_detect(path_chr, "[/\\\\]pairwise_metrics[/\\\\]") ~ "pairwise_metrics",
+    TRUE ~ NA_character_
+  )
+
+  substage <- case_when(
+    str_detect(path_chr, "[/\\\\]pairwise_metrics[/\\\\].*[/\\\\]injected_only[/\\\\]") ~ "injected_only",
+    str_detect(path_chr, "[/\\\\]pairwise_metrics[/\\\\].*[/\\\\]win_rate[/\\\\]") ~ "win_rate",
+    TRUE ~ stage
+  )
+
+  scenario_id <- as.character(
+    get_scalar(
+      obj,
+      "scenario_id",
+      get_scalar(
+        obj,
+        "scenario",
+        get_scalar(obj, "defended_scenario_id", NA_character_)
+      )
+    )
+  )
+
+  seed <- suppressWarnings(as.integer(
+    get_scalar(
+      obj,
+      "seed",
+      get_scalar(obj, "defended_seed", NA_integer_)
+    )
+  ))
+
+  rows <- suppressWarnings(as.numeric(
+    get_scalar(
+      obj,
+      "rows",
+      get_scalar(
+        obj,
+        "train_rows",
+        NA_real_
+      )
+    )
+  ))
+
+  train_rows <- suppressWarnings(as.numeric(get_scalar(obj, "train_rows", NA_real_)))
+  validation_rows <- suppressWarnings(as.numeric(get_scalar(obj, "validation_rows", NA_real_)))
+
+  splits <- obj$splits
+  split_count <- if (is.null(splits)) {
+    NA_integer_
+  } else if (is.data.frame(splits)) {
+    nrow(splits)
+  } else if (is.list(splits)) {
+    length(splits)
+  } else {
+    NA_integer_
+  }
+
+  split_rows_sum <- NA_real_
+  split_elapsed_seconds_sum <- NA_real_
+
+  if (!is.null(splits)) {
+    split_tbl <- tryCatch(as_tibble_json_safe(splits), error = function(e) tibble())
+
+    if (nrow(split_tbl) > 0) {
+      if ("rows" %in% names(split_tbl)) {
+        split_rows_sum <- sum(as.numeric(split_tbl$rows), na.rm = TRUE)
+      }
+
+      if ("elapsed_seconds" %in% names(split_tbl)) {
+        split_elapsed_seconds_sum <- sum(as.numeric(split_tbl$elapsed_seconds), na.rm = TRUE)
+      }
+    }
+  }
+
+  tibble(
+    stage = stage,
+    substage = substage,
+    scenario_id = scenario_id,
+    seed = seed,
+    status = as.character(get_scalar(obj, "status", NA_character_)),
+    method = as.character(get_scalar(obj, "method", NA_character_)),
+    run_mode = as.character(get_scalar(obj, "run_mode", NA_character_)),
+    eval_split = as.character(get_scalar(obj, "eval_split", NA_character_)),
+    started_at_utc = as.character(get_scalar(obj, "started_at_utc", NA_character_)),
+    finished_at_utc = as.character(get_scalar(obj, "finished_at_utc", NA_character_)),
+    started_at = parse_time_utc(started_at_utc),
+    finished_at = parse_time_utc(finished_at_utc),
+    elapsed_seconds = suppressWarnings(as.numeric(get_scalar(obj, "elapsed_seconds", NA_real_))),
+    rows = rows,
+    train_rows = train_rows,
+    validation_rows = validation_rows,
+    split_count = split_count,
+    split_rows_sum = split_rows_sum,
+    split_elapsed_seconds_sum = split_elapsed_seconds_sum,
+    metadata_path = path_chr,
+    parse_ok = TRUE
+  )
+}
+
+run_metadata <- purrr::map_dfr(
+  all_run_metadata_files,
+  read_generic_run_metadata
+) |>
+  add_scenario_info() |>
+  mutate(
+    stage = as.character(stage),
+    substage = as.character(substage),
+    elapsed_minutes = elapsed_seconds / 60,
+    elapsed_hours = elapsed_seconds / 3600,
+    seconds_per_row = case_when(
+      !is.na(split_rows_sum) & split_rows_sum > 0 ~ elapsed_seconds / split_rows_sum,
+      !is.na(rows) & rows > 0 ~ elapsed_seconds / rows,
+      TRUE ~ NA_real_
+    ),
+    rows_per_second = case_when(
+      !is.na(split_rows_sum) & elapsed_seconds > 0 ~ split_rows_sum / elapsed_seconds,
+      !is.na(rows) & elapsed_seconds > 0 ~ rows / elapsed_seconds,
+      TRUE ~ NA_real_
+    )
+  ) |>
+  sort_stages() |>
+  sort_scenarios()
+
+write_pipeline_csv(run_metadata, "05_all_run_metadata.csv")
+
+run_metadata |>
+  count(stage_label, substage, scenario_short, name = "n_run_metadata_files") |>
+  arrange(stage_label, substage, scenario_short) |>
+  knitr::kable(
+    caption = "Table 5 - Run metadata files by stage, substage, and scenario."
+  )
+```
+
+# Stage cost from run metadata
+
+```{r stage-cost-from-runs}
+stage_run_cost <- run_metadata |>
+  filter(parse_ok, !is.na(stage)) |>
+  group_by(stage, stage_label, substage) |>
+  summarise(
+    n_run_metadata_files = n(),
+    n_completed_like = sum(str_detect(status, "completed"), na.rm = TRUE),
+    n_error_like = sum(str_detect(status, "error|failed"), na.rm = TRUE),
+    scenarios = paste(sort(unique(na.omit(as.character(scenario_short)))), collapse = ", "),
+    seeds = paste(sort(unique(na.omit(seed))), collapse = ", "),
+    total_run_elapsed_seconds = sum(elapsed_seconds, na.rm = TRUE),
+    mean_run_elapsed_seconds = mean(elapsed_seconds, na.rm = TRUE),
+    sd_run_elapsed_seconds = safe_sd(elapsed_seconds),
+    total_rows_reported = sum(rows, na.rm = TRUE),
+    total_split_rows = sum(split_rows_sum, na.rm = TRUE),
+    total_train_rows = sum(train_rows, na.rm = TRUE),
+    total_validation_rows = sum(validation_rows, na.rm = TRUE),
+    total_split_elapsed_seconds = sum(split_elapsed_seconds_sum, na.rm = TRUE),
+    mean_seconds_per_row = safe_mean(seconds_per_row),
+    mean_rows_per_second = safe_mean(rows_per_second),
+    .groups = "drop"
+  ) |>
+  mutate(
+    total_run_elapsed_minutes = total_run_elapsed_seconds / 60,
+    total_run_elapsed_hours = total_run_elapsed_seconds / 3600,
+    mean_run_elapsed_minutes = mean_run_elapsed_seconds / 60,
+    total_run_duration_label = fmt_duration(total_run_elapsed_seconds),
+    mean_run_duration_label = fmt_duration(mean_run_elapsed_seconds)
+  ) |>
+  sort_stages()
+
+write_pipeline_csv(stage_run_cost, "06_stage_cost_from_run_metadata.csv")
+
+stage_run_cost |>
+  select(
+    stage_label,
+    substage,
+    n_run_metadata_files,
+    n_completed_like,
+    n_error_like,
+    scenarios,
+    total_run_elapsed_hours,
+    mean_run_elapsed_minutes,
+    total_rows_reported,
+    total_split_rows,
+    total_train_rows,
+    total_validation_rows,
+    mean_seconds_per_row,
+    mean_rows_per_second,
+    total_run_duration_label
+  ) |>
+  mutate(
+    total_run_elapsed_hours = fmt_number(total_run_elapsed_hours),
+    mean_run_elapsed_minutes = fmt_number(mean_run_elapsed_minutes),
+    total_rows_reported = fmt_number(total_rows_reported, accuracy = 1),
+    total_split_rows = fmt_number(total_split_rows, accuracy = 1),
+    total_train_rows = fmt_number(total_train_rows, accuracy = 1),
+    total_validation_rows = fmt_number(total_validation_rows, accuracy = 1),
+    mean_seconds_per_row = fmt_number(mean_seconds_per_row, accuracy = 0.0001),
+    mean_rows_per_second = fmt_number(mean_rows_per_second, accuracy = 0.001)
+  ) |>
+  knitr::kable(
+    caption = "Table 6 - Stage cost from run metadata."
+  )
+```
+
+# Unified stage cost summary
+
+```{r unified-stage-cost}
+stage_run_cost_total <- stage_run_cost |>
+  group_by(stage, stage_label) |>
+  summarise(
+    run_metadata_elapsed_seconds = sum(total_run_elapsed_seconds, na.rm = TRUE),
+    run_metadata_files = sum(n_run_metadata_files, na.rm = TRUE),
+    run_metadata_completed_like = sum(n_completed_like, na.rm = TRUE),
+    run_metadata_error_like = sum(n_error_like, na.rm = TRUE),
+    run_metadata_rows = sum(total_rows_reported, na.rm = TRUE),
+    run_metadata_split_rows = sum(total_split_rows, na.rm = TRUE),
+    run_metadata_train_rows = sum(total_train_rows, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+unified_stage_cost <- stage_event_summary |>
+  select(
+    stage,
+    stage_label,
+    n_events,
+    first_event_utc,
+    last_event_utc,
+    observed_stage_seconds,
+    event_elapsed_seconds_sum,
+    event_rows_sum
+  ) |>
+  full_join(
+    stage_run_cost_total,
+    by = c("stage", "stage_label")
+  ) |>
+  full_join(
+    summary_records |>
+      select(
+        stage,
+        stage_label,
+        notebook,
+        created_at_utc,
+        run_mode,
+        training_results_count,
+        inference_results_count,
+        result_files_count,
+        input_files_count,
+        generated_files_count,
+        metrics_computed_count,
+        outputs_count,
+        num_inference_rows,
+        total_inference_rows,
+        counts_injected_only_rows,
+        counts_mr_paired_rows,
+        counts_win_rate_pairs,
+        counts_win_rate_judgments,
+        paired_vs_c0_rows,
+        invalid_output_rows
+      ),
+    by = c("stage", "stage_label")
+  ) |>
+  mutate(
+    primary_cost_seconds = case_when(
+      !is.na(run_metadata_elapsed_seconds) & run_metadata_elapsed_seconds > 0 ~ run_metadata_elapsed_seconds,
+      !is.na(event_elapsed_seconds_sum) & event_elapsed_seconds_sum > 0 ~ event_elapsed_seconds_sum,
+      TRUE ~ observed_stage_seconds
+    ),
+    primary_cost_source = case_when(
+      !is.na(run_metadata_elapsed_seconds) & run_metadata_elapsed_seconds > 0 ~ "run_metadata_elapsed_sum",
+      !is.na(event_elapsed_seconds_sum) & event_elapsed_seconds_sum > 0 ~ "event_elapsed_sum",
+      TRUE ~ "event_timestamp_span"
+    ),
+    primary_cost_minutes = primary_cost_seconds / 60,
+    primary_cost_hours = primary_cost_seconds / 3600,
+    observed_stage_minutes = observed_stage_seconds / 60,
+    observed_stage_hours = observed_stage_seconds / 3600,
+    run_metadata_elapsed_hours = run_metadata_elapsed_seconds / 3600,
+    primary_cost_label = fmt_duration(primary_cost_seconds)
+  ) |>
+  mutate(
+    share_of_primary_cost = primary_cost_seconds / sum(primary_cost_seconds, na.rm = TRUE),
+    share_of_observed_stage_span = observed_stage_seconds / sum(observed_stage_seconds, na.rm = TRUE)
+  ) |>
+  sort_stages()
+
+pipeline_summary <- tibble(
+  pipeline_start_utc = pipeline_start,
+  pipeline_end_utc = pipeline_end,
+  pipeline_wall_clock_seconds = pipeline_wall_clock_seconds,
+  pipeline_wall_clock_hours = pipeline_wall_clock_seconds / 3600,
+  sum_observed_stage_seconds = sum(unified_stage_cost$observed_stage_seconds, na.rm = TRUE),
+  sum_observed_stage_hours = sum_observed_stage_seconds / 3600,
+  sum_primary_cost_seconds = sum(unified_stage_cost$primary_cost_seconds, na.rm = TRUE),
+  sum_primary_cost_hours = sum_primary_cost_seconds / 3600,
+  active_stage_share_of_wall_clock = sum_observed_stage_seconds / pipeline_wall_clock_seconds,
+  primary_cost_share_of_wall_clock = sum_primary_cost_seconds / pipeline_wall_clock_seconds,
+  pipeline_duration_label = fmt_duration(pipeline_wall_clock_seconds),
+  sum_primary_cost_label = fmt_duration(sum_primary_cost_seconds)
+)
+
+write_pipeline_csv(unified_stage_cost, "07_unified_stage_cost_summary.csv")
+write_pipeline_csv(pipeline_summary, "08_pipeline_total_summary.csv")
+
+pipeline_summary |>
+  mutate(
+    pipeline_wall_clock_hours = fmt_number(pipeline_wall_clock_hours),
+    sum_observed_stage_hours = fmt_number(sum_observed_stage_hours),
+    sum_primary_cost_hours = fmt_number(sum_primary_cost_hours),
+    active_stage_share_of_wall_clock = fmt_pct(active_stage_share_of_wall_clock),
+    primary_cost_share_of_wall_clock = fmt_pct(primary_cost_share_of_wall_clock)
+  ) |>
+  knitr::kable(
+    caption = "Table 7 - Total pipeline runtime summary."
+  )
+
+unified_stage_cost |>
+  select(
+    stage_label,
+    notebook,
+    n_events,
+    run_metadata_files,
+    first_event_utc,
+    last_event_utc,
+    observed_stage_hours,
+    primary_cost_hours,
+    primary_cost_source,
+    share_of_primary_cost,
+    event_rows_sum,
+    run_metadata_rows,
+    run_metadata_split_rows,
+    primary_cost_label
+  ) |>
+  mutate(
+    observed_stage_hours = fmt_number(observed_stage_hours),
+    primary_cost_hours = fmt_number(primary_cost_hours),
+    share_of_primary_cost = fmt_pct(share_of_primary_cost),
+    event_rows_sum = fmt_number(event_rows_sum, accuracy = 1),
+    run_metadata_rows = fmt_number(run_metadata_rows, accuracy = 1),
+    run_metadata_split_rows = fmt_number(run_metadata_split_rows, accuracy = 1)
+  ) |>
+  knitr::kable(
+    caption = "Table 8 - Unified stage cost summary."
+  )
+```
+
+# Scenario-level pipeline cost
+
+```{r scenario-level-pipeline-cost}
+scenario_stage_cost <- run_metadata |>
+  filter(parse_ok, !is.na(stage), !is.na(scenario_id)) |>
+  group_by(stage, stage_label, substage, scenario_id, scenario_short, scenario_label) |>
+  summarise(
+    n_runs = n(),
+    seeds = paste(sort(unique(na.omit(seed))), collapse = ", "),
+    total_elapsed_seconds = sum(elapsed_seconds, na.rm = TRUE),
+    mean_elapsed_seconds = mean(elapsed_seconds, na.rm = TRUE),
+    total_rows = sum(rows, na.rm = TRUE),
+    total_split_rows = sum(split_rows_sum, na.rm = TRUE),
+    total_train_rows = sum(train_rows, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    total_elapsed_minutes = total_elapsed_seconds / 60,
+    total_elapsed_hours = total_elapsed_seconds / 3600,
+    mean_elapsed_minutes = mean_elapsed_seconds / 60,
+    duration_label = fmt_duration(total_elapsed_seconds)
+  ) |>
+  sort_stages() |>
+  sort_scenarios()
+
+scenario_total_cost <- scenario_stage_cost |>
+  group_by(scenario_id, scenario_short, scenario_label) |>
+  summarise(
+    n_stage_substage_rows = n(),
+    stages = paste(sort(unique(as.character(stage_label))), collapse = ", "),
+    total_elapsed_seconds = sum(total_elapsed_seconds, na.rm = TRUE),
+    training_seconds = sum(total_elapsed_seconds[stage == "training"], na.rm = TRUE),
+    inference_seconds = sum(total_elapsed_seconds[stage == "inference"], na.rm = TRUE),
+    pairwise_seconds = sum(total_elapsed_seconds[stage == "pairwise_metrics"], na.rm = TRUE),
+    total_rows = sum(total_rows, na.rm = TRUE),
+    total_split_rows = sum(total_split_rows, na.rm = TRUE),
+    total_train_rows = sum(total_train_rows, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    total_elapsed_hours = total_elapsed_seconds / 3600,
+    training_hours = training_seconds / 3600,
+    inference_hours = inference_seconds / 3600,
+    pairwise_hours = pairwise_seconds / 3600,
+    share_training = training_seconds / total_elapsed_seconds,
+    share_inference = inference_seconds / total_elapsed_seconds,
+    share_pairwise = pairwise_seconds / total_elapsed_seconds,
+    duration_label = fmt_duration(total_elapsed_seconds)
+  ) |>
+  sort_scenarios()
+
+write_pipeline_csv(scenario_stage_cost, "09_scenario_stage_cost.csv")
+write_pipeline_csv(scenario_total_cost, "10_scenario_total_pipeline_cost.csv")
+
+scenario_total_cost |>
+  select(
+    scenario_short,
+    stages,
+    total_elapsed_hours,
+    training_hours,
+    inference_hours,
+    pairwise_hours,
+    share_training,
+    share_inference,
+    share_pairwise,
+    total_rows,
+    total_split_rows,
+    total_train_rows,
+    duration_label
+  ) |>
+  mutate(
+    total_elapsed_hours = fmt_number(total_elapsed_hours),
+    training_hours = fmt_number(training_hours),
+    inference_hours = fmt_number(inference_hours),
+    pairwise_hours = fmt_number(pairwise_hours),
+    share_training = fmt_pct(share_training),
+    share_inference = fmt_pct(share_inference),
+    share_pairwise = fmt_pct(share_pairwise),
+    total_rows = fmt_number(total_rows, accuracy = 1),
+    total_split_rows = fmt_number(total_split_rows, accuracy = 1),
+    total_train_rows = fmt_number(total_train_rows, accuracy = 1)
+  ) |>
+  knitr::kable(
+    caption = "Table 9 - Scenario-level pipeline cost from run metadata."
+  )
+```
+
+# Reliability and error summary
+
+```{r reliability}
+error_files <- fs::dir_ls(LOGS_DIR, recurse = TRUE, regexp = "error\\.txt$")
+
+pipeline_errors <- purrr::map_dfr(
+  error_files,
+  function(path) {
+    path_chr <- as.character(path)
+
+    stage <- case_when(
+      str_detect(path_chr, "[/\\\\]training[/\\\\]") ~ "training",
+      str_detect(path_chr, "[/\\\\]inference[/\\\\]") ~ "inference",
+      str_detect(path_chr, "[/\\\\]metrics[/\\\\]") ~ "metrics",
+      str_detect(path_chr, "[/\\\\]pairwise_metrics[/\\\\]") ~ "pairwise_metrics",
+      str_detect(path_chr, "[/\\\\]statistical_analysis[/\\\\]") ~ "statistical_analysis",
+      str_detect(path_chr, "[/\\\\]error_analysis[/\\\\]") ~ "error_analysis",
+      TRUE ~ NA_character_
+    )
+
+    parts <- stringr::str_split(path_chr, "[/\\\\]", simplify = TRUE)
+    scenario_guess <- parts[parts %in% scenario_order][1]
+    seed_part <- parts[str_detect(parts, "^seed_")][1]
+    seed_guess <- suppressWarnings(as.integer(str_remove(seed_part, "^seed_")))
+
+    error_text <- paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+
+    tibble(
+      stage = stage,
+      scenario_id = scenario_guess,
+      seed = seed_guess,
+      error_path = path_chr,
+      error_text = error_text,
+      error_preview = substr(error_text, 1, 500)
+    )
+  }
+) |>
+  add_scenario_info() |>
+  sort_stages() |>
+  sort_scenarios()
+
+pipeline_error_summary <- pipeline_errors |>
+  count(stage, stage_label, scenario_id, scenario_short, seed, name = "n_error_files") |>
+  sort_stages() |>
+  sort_scenarios()
+
+status_summary <- run_metadata |>
+  filter(parse_ok, !is.na(stage)) |>
+  count(stage, stage_label, substage, status, name = "n_runs") |>
+  sort_stages()
+
+write_pipeline_csv(pipeline_errors, "11_pipeline_error_files.csv")
+write_pipeline_csv(pipeline_error_summary, "12_pipeline_error_summary.csv")
+write_pipeline_csv(status_summary, "13_run_status_summary.csv")
+
+if (nrow(pipeline_errors) > 0) {
+  pipeline_errors |>
+    select(stage_label, scenario_short, seed, error_path, error_preview) |>
+    knitr::kable(
+      caption = "Table 10 - Error files found in pipeline logs."
+    )
+} else {
+  cat("No error.txt files found in the pipeline logs.")
+}
+
+status_summary |>
+  knitr::kable(
+    caption = "Table 11 - Run status summary from metadata files."
+  )
+```
+
+# Bottleneck analysis
+
+```{r bottlenecks}
+bottleneck_table <- unified_stage_cost |>
+  arrange(desc(primary_cost_seconds)) |>
+  mutate(
+    cost_rank = row_number(),
+    cumulative_cost_share = cumsum(share_of_primary_cost)
+  ) |>
+  select(
+    cost_rank,
+    stage,
+    stage_label,
+    primary_cost_seconds,
+    primary_cost_hours,
+    primary_cost_source,
+    share_of_primary_cost,
+    cumulative_cost_share,
+    observed_stage_seconds,
+    run_metadata_elapsed_seconds,
+    event_elapsed_seconds_sum,
+    n_events,
+    run_metadata_files
+  )
+
+scenario_bottleneck_table <- scenario_total_cost |>
+  arrange(desc(total_elapsed_seconds)) |>
+  mutate(
+    scenario_cost_rank = row_number(),
+    scenario_cost_share = total_elapsed_seconds / sum(total_elapsed_seconds, na.rm = TRUE),
+    cumulative_scenario_cost_share = cumsum(scenario_cost_share)
+  )
+
+write_pipeline_csv(bottleneck_table, "14_stage_bottleneck_table.csv")
+write_pipeline_csv(scenario_bottleneck_table, "15_scenario_bottleneck_table.csv")
+
+bottleneck_table |>
+  mutate(
+    primary_cost_hours = fmt_number(primary_cost_hours),
+    share_of_primary_cost = fmt_pct(share_of_primary_cost),
+    cumulative_cost_share = fmt_pct(cumulative_cost_share),
+    observed_stage_seconds = fmt_number(observed_stage_seconds),
+    run_metadata_elapsed_seconds = fmt_number(run_metadata_elapsed_seconds),
+    event_elapsed_seconds_sum = fmt_number(event_elapsed_seconds_sum)
+  ) |>
+  knitr::kable(
+    caption = "Table 12 - Stage bottleneck ranking."
+  )
+
+scenario_bottleneck_table |>
+  select(
+    scenario_cost_rank,
+    scenario_short,
+    total_elapsed_hours,
+    training_hours,
+    inference_hours,
+    pairwise_hours,
+    scenario_cost_share,
+    cumulative_scenario_cost_share,
+    duration_label
+  ) |>
+  mutate(
+    total_elapsed_hours = fmt_number(total_elapsed_hours),
+    training_hours = fmt_number(training_hours),
+    inference_hours = fmt_number(inference_hours),
+    pairwise_hours = fmt_number(pairwise_hours),
+    scenario_cost_share = fmt_pct(scenario_cost_share),
+    cumulative_scenario_cost_share = fmt_pct(cumulative_scenario_cost_share)
+  ) |>
+  knitr::kable(
+    caption = "Table 13 - Scenario bottleneck ranking."
+  )
+```
+
+# Figures
+
+## End-to-end stage timeline
+
+```{r fig-stage-timeline, fig.width=11, fig.height=6}
+p_stage_timeline <- stage_event_summary |>
+  ggplot(aes(y = fct_rev(stage_label), color = stage)) +
+  geom_segment(
+    aes(x = first_event_utc, xend = last_event_utc, yend = fct_rev(stage_label)),
+    linewidth = 5,
+    lineend = "round",
+    show.legend = FALSE
+  ) +
+  scale_color_manual(values = stage_palette, drop = FALSE) +
+  labs(
+    title = "End-to-end pipeline stage timeline",
+    subtitle = "Intervals are based on first and last event timestamp for each stage.",
+    x = "Time (UTC)",
+    y = "Stage"
+  ) +
+  base_theme()
+
+print(p_stage_timeline)
+
+save_pipeline_figure(
+  p_stage_timeline,
+  "01_pipeline_stage_timeline.png",
+  width = 11,
+  height = 6
+)
+```
+
+## Stage cost share
+
+```{r fig-stage-cost-share, fig.width=10.5, fig.height=6}
+p_stage_share <- unified_stage_cost |>
+  ggplot(aes(x = fct_reorder(stage_label, primary_cost_seconds), y = primary_cost_hours, fill = stage)) +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  geom_text(
+    aes(label = paste0(round(share_of_primary_cost * 100, 1), "%")),
+    hjust = -0.1,
+    size = 3.5
+  ) +
+  coord_flip() +
+  scale_fill_manual(values = stage_palette, drop = FALSE) +
+  labs(
+    title = "Pipeline cost by stage",
+    subtitle = "Primary cost uses run metadata when available; otherwise event elapsed/span.",
+    x = "Stage",
+    y = "Primary cost (hours)"
+  ) +
+  base_theme()
+
+print(p_stage_share)
+
+save_pipeline_figure(
+  p_stage_share,
+  "02_pipeline_cost_by_stage.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Observed stage span vs primary cost
+
+```{r fig-observed-vs-primary, fig.width=10.5, fig.height=6}
+p_observed_primary <- unified_stage_cost |>
+  select(stage, stage_label, observed_stage_hours, primary_cost_hours) |>
+  pivot_longer(
+    cols = c(observed_stage_hours, primary_cost_hours),
+    names_to = "cost_type",
+    values_to = "hours"
+  ) |>
+  mutate(
+    cost_type = recode(
+      cost_type,
+      observed_stage_hours = "Observed event span",
+      primary_cost_hours = "Primary cost"
+    )
+  ) |>
+  ggplot(aes(x = stage_label, y = hours, fill = cost_type)) +
+  geom_col(position = position_dodge(width = 0.75), width = 0.65) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Observed stage span vs primary cost",
+    subtitle = "Observed span is first-to-last event time. Primary cost uses the best available elapsed-time source.",
+    x = "Stage",
+    y = "Hours",
+    fill = "Cost type"
+  ) +
+  base_theme() +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+print(p_observed_primary)
+
+save_pipeline_figure(
+  p_observed_primary,
+  "03_observed_span_vs_primary_cost.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Scenario total cost
+
+```{r fig-scenario-total-cost, fig.width=10.5, fig.height=6}
+p_scenario_total <- scenario_total_cost |>
+  ggplot(aes(x = scenario_short, y = total_elapsed_hours, fill = scenario_short)) +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  geom_text(
+    aes(label = paste0(round(total_elapsed_hours, 2), " h")),
+    vjust = -0.4,
+    size = 3.5
+  ) +
+  scale_fill_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Scenario-level pipeline cost",
+    subtitle = "Sum of available run metadata elapsed time by scenario.",
+    x = "Scenario",
+    y = "Total elapsed time (hours)"
+  ) +
+  base_theme()
+
+print(p_scenario_total)
+
+save_pipeline_figure(
+  p_scenario_total,
+  "04_scenario_total_pipeline_cost.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Scenario cost composition
+
+```{r fig-scenario-composition, fig.width=10.5, fig.height=6}
+scenario_composition <- scenario_total_cost |>
+  select(scenario_id, scenario_short, training_hours, inference_hours, pairwise_hours) |>
+  pivot_longer(
+    cols = c(training_hours, inference_hours, pairwise_hours),
+    names_to = "cost_component",
+    values_to = "hours"
+  ) |>
+  mutate(
+    cost_component = recode(
+      cost_component,
+      training_hours = "Training",
+      inference_hours = "Inference",
+      pairwise_hours = "Pairwise metrics"
+    )
+  )
+
+p_scenario_composition <- scenario_composition |>
+  ggplot(aes(x = scenario_short, y = hours, fill = cost_component)) +
+  geom_col(width = 0.72) +
+  labs(
+    title = "Scenario cost composition",
+    subtitle = "Training, inference, and pairwise/judge stages from run metadata.",
+    x = "Scenario",
+    y = "Elapsed time (hours)",
+    fill = "Component"
+  ) +
+  base_theme()
+
+print(p_scenario_composition)
+
+save_pipeline_figure(
+  p_scenario_composition,
+  "05_scenario_cost_composition.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Run metadata duration distribution
+
+```{r fig-run-duration-distribution, fig.width=11, fig.height=7}
+p_run_distribution <- run_metadata |>
+  filter(parse_ok, !is.na(stage), !is.na(elapsed_minutes)) |>
+  ggplot(aes(x = substage, y = elapsed_minutes, color = scenario_short)) +
+  geom_point(aes(shape = factor(seed)), size = 2.9, position = position_jitter(width = 0.12, height = 0)) +
+  facet_wrap(~ stage_label, scales = "free_x") +
+  scale_color_manual(values = scenario_palette, drop = FALSE) +
+  labs(
+    title = "Run metadata duration distribution",
+    subtitle = "Each point is one run_metadata.json file.",
+    x = "Substage",
+    y = "Elapsed time (minutes)",
+    color = "Scenario",
+    shape = "Seed"
+  ) +
+  base_theme() +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+print(p_run_distribution)
+
+save_pipeline_figure(
+  p_run_distribution,
+  "06_run_metadata_duration_distribution.png",
+  width = 11,
+  height = 7
+)
+```
+
+## Event count by stage
+
+```{r fig-event-counts, fig.width=10.5, fig.height=6}
+p_event_counts <- all_events |>
+  count(stage, stage_label, event_type, name = "n_events") |>
+  ggplot(aes(x = stage_label, y = n_events, fill = event_type)) +
+  geom_col(width = 0.72) +
+  labs(
+    title = "Event count by stage",
+    subtitle = "Stacked by event_type.",
+    x = "Stage",
+    y = "Number of events",
+    fill = "Event type"
+  ) +
+  base_theme() +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+print(p_event_counts)
+
+save_pipeline_figure(
+  p_event_counts,
+  "07_event_count_by_stage.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Rows processed by stage
+
+```{r fig-rows-processed, fig.width=10.5, fig.height=6}
+rows_stage_plot <- unified_stage_cost |>
+  mutate(
+    best_rows = case_when(
+      !is.na(run_metadata_split_rows) & run_metadata_split_rows > 0 ~ run_metadata_split_rows,
+      !is.na(run_metadata_rows) & run_metadata_rows > 0 ~ run_metadata_rows,
+      !is.na(event_rows_sum) & event_rows_sum > 0 ~ event_rows_sum,
+      !is.na(num_inference_rows) & num_inference_rows > 0 ~ num_inference_rows,
+      !is.na(total_inference_rows) & total_inference_rows > 0 ~ total_inference_rows,
+      TRUE ~ NA_real_
+    )
+  )
+
+p_rows_stage <- rows_stage_plot |>
+  filter(!is.na(best_rows)) |>
+  ggplot(aes(x = fct_reorder(stage_label, best_rows), y = best_rows, fill = stage)) +
+  geom_col(width = 0.72, show.legend = FALSE) +
+  coord_flip() +
+  scale_fill_manual(values = stage_palette, drop = FALSE) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  labs(
+    title = "Rows processed or reported by stage",
+    subtitle = "Uses best available row count from metadata, events, or summaries.",
+    x = "Stage",
+    y = "Rows"
+  ) +
+  base_theme()
+
+print(p_rows_stage)
+
+save_pipeline_figure(
+  p_rows_stage,
+  "08_rows_processed_by_stage.png",
+  width = 10.5,
+  height = 6
+)
+```
+
+## Error files by stage
+
+```{r fig-errors, fig.width=9.5, fig.height=5.5}
+if (nrow(pipeline_error_summary) > 0) {
+  p_errors <- pipeline_error_summary |>
+    group_by(stage, stage_label) |>
+    summarise(n_error_files = sum(n_error_files), .groups = "drop") |>
+    ggplot(aes(x = stage_label, y = n_error_files, fill = stage)) +
+    geom_col(width = 0.72, show.legend = FALSE) +
+    scale_fill_manual(values = stage_palette, drop = FALSE) +
+    labs(
+      title = "Error files by stage",
+      subtitle = "Counts error.txt files discovered under logs.",
+      x = "Stage",
+      y = "Error files"
+    ) +
+    base_theme() +
+    theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+  print(p_errors)
+
+  save_pipeline_figure(
+    p_errors,
+    "09_error_files_by_stage.png",
+    width = 9.5,
+    height = 5.5
+  )
+}
+```
+
+# Paper-ready table
+
+```{r paper-ready}
+paper_pipeline_table <- unified_stage_cost |>
+  select(
+    stage_label,
+    notebook,
+    n_events,
+    run_metadata_files,
+    observed_stage_seconds,
+    primary_cost_seconds,
+    primary_cost_source,
+    share_of_primary_cost,
+    event_rows_sum,
+    run_metadata_rows,
+    run_metadata_split_rows,
+    run_metadata_train_rows
+  ) |>
+  mutate(
+    observed_stage_hours = fmt_number(observed_stage_seconds / 3600),
+    primary_cost_hours = fmt_number(primary_cost_seconds / 3600),
+    share_of_primary_cost = fmt_pct(share_of_primary_cost),
+    event_rows_sum = fmt_number(event_rows_sum, accuracy = 1),
+    run_metadata_rows = fmt_number(run_metadata_rows, accuracy = 1),
+    run_metadata_split_rows = fmt_number(run_metadata_split_rows, accuracy = 1),
+    run_metadata_train_rows = fmt_number(run_metadata_train_rows, accuracy = 1)
+  ) |>
+  select(
+    stage_label,
+    notebook,
+    n_events,
+    run_metadata_files,
+    observed_stage_hours,
+    primary_cost_hours,
+    primary_cost_source,
+    share_of_primary_cost,
+    event_rows_sum,
+    run_metadata_rows,
+    run_metadata_split_rows,
+    run_metadata_train_rows
+  )
+
+write_pipeline_csv(paper_pipeline_table, "16_paper_ready_pipeline_runtime_table.csv")
+
+paper_pipeline_table |>
+  knitr::kable(
+    caption = "Table 14 - Paper-ready pipeline runtime table."
+  )
+```
+
+# Interpretation notes
+
+```{r methodological-notes, results='asis'}
+cat("
+## How to interpret this report
+
+This report uses two notions of time.
+
+Observed stage span is the time between the first and last event timestamp in each stage log. It is useful for timeline analysis.
+
+Primary cost is the best available elapsed-time estimate for each stage. When run_metadata.json files exist, the primary cost is the sum of run metadata elapsed_seconds. Otherwise, the report falls back to elapsed_seconds found in event rows, and then to the event timestamp span.
+
+Because some stages include multiple scenario/seed runs, primary cost can differ from wall-clock duration. It estimates accumulated compute or task time, while observed stage span estimates calendar time.
+
+Training and inference are model-execution stages. Metrics, statistical analysis, and error analysis are mostly post-processing stages. Pairwise metrics can include both additional inference-style injected-only runs and judge-based win-rate runs.
+
+C0 and C1 have no adapter-training cost, but they can have inference, injected-only, and pairwise metric costs.
+")
+```
+
+# Generated files
+
+Tables are saved in:
+
+```text
+tables/pipeline_runtime_analysis/
+```
+
+Figures are saved in:
+
+```text
+figures/pipeline_runtime_analysis/
+```
+
+Main files:
+
+```text
+01_stage_paths.csv
+02_all_pipeline_events.csv
+03_stage_event_timeline_summary.csv
+04_stage_summary_json_records.csv
+05_all_run_metadata.csv
+06_stage_cost_from_run_metadata.csv
+07_unified_stage_cost_summary.csv
+08_pipeline_total_summary.csv
+09_scenario_stage_cost.csv
+10_scenario_total_pipeline_cost.csv
+11_pipeline_error_files.csv
+12_pipeline_error_summary.csv
+13_run_status_summary.csv
+14_stage_bottleneck_table.csv
+15_scenario_bottleneck_table.csv
+16_paper_ready_pipeline_runtime_table.csv
+
+01_pipeline_stage_timeline.png
+02_pipeline_cost_by_stage.png
+03_observed_span_vs_primary_cost.png
+04_scenario_total_pipeline_cost.png
+05_scenario_cost_composition.png
+06_run_metadata_duration_distribution.png
+07_event_count_by_stage.png
+08_rows_processed_by_stage.png
+09_error_files_by_stage.png
+```

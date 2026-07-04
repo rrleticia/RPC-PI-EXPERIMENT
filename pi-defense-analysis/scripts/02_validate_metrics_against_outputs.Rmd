@@ -1,0 +1,641 @@
+---
+title: "02 — Validação das métricas recomputadas"
+author: "RPC-PI Experiment"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    theme: sandstone
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+
+options(scipen = 999)
+```
+
+# Objetivo
+
+Este notebook valida se as métricas recomputadas no `01_descriptive_metrics.Rmd` batem com as métricas originais produzidas pelos notebooks Python do experimento.
+
+A validação compara três níveis de agregação:
+
+1. `run_split_metrics`: métricas por cenário, seed e split.
+2. `run_level_metrics`: métricas por cenário e seed.
+3. `scenario_level_metrics`: métricas agregadas por cenário.
+
+A ideia é garantir que as análises feitas em R estão reproduzindo os resultados já salvos em `data/results/metrics/full/`.
+
+# Pacotes e caminhos
+
+```{r packages}
+packages <- c(
+  "tidyverse",
+  "readr",
+  "fs",
+  "here",
+  "knitr"
+)
+
+missing_packages <- packages[!packages %in% rownames(installed.packages())]
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(tidyverse)
+library(readr)
+library(fs)
+library(here)
+library(knitr)
+```
+
+```{r paths}
+DATA_DIR <- here::here("data", "results")
+ORIGINAL_METRICS_DIR <- file.path(DATA_DIR, "metrics", "full")
+RECOMPUTED_DIR <- here::here("tables", "descriptive")
+OUT_DIR <- here::here("tables", "validation")
+
+fs::dir_create(OUT_DIR)
+
+# Se o ZIP estiver na raiz do projeto e data/results ainda não existir,
+# extraímos automaticamente.
+if (!dir.exists(DATA_DIR) && file.exists(here::here("results.zip"))) {
+  dir.create(here::here("data"), showWarnings = FALSE)
+  unzip(here::here("results.zip"), exdir = here::here("data"))
+}
+
+if (!dir.exists(ORIGINAL_METRICS_DIR)) {
+  stop(
+    "Não encontrei data/results/metrics/full. ",
+    "Verifique se results.zip foi extraído para data/results/."
+  )
+}
+
+if (!dir.exists(RECOMPUTED_DIR)) {
+  stop(
+    "Não encontrei tables/descriptive. ",
+    "Rode primeiro o notebook 01_descriptive_metrics.Rmd."
+  )
+}
+```
+
+# Parâmetros de validação
+
+Usamos uma tolerância pequena para diferenças numéricas, porque pequenas variações podem aparecer por arredondamento de ponto flutuante.
+
+```{r validation-params}
+TOLERANCE <- 1e-10
+TOLERANCE
+```
+
+# Funções auxiliares
+
+```{r helper-functions}
+read_required_csv <- function(path) {
+  if (!file.exists(path)) {
+    stop("Arquivo não encontrado: ", path)
+  }
+
+  readr::read_csv(path, show_col_types = FALSE)
+}
+
+max_or_na <- function(x) {
+  if (length(x) == 0 || all(is.na(x))) {
+    return(NA_real_)
+  }
+
+  max(x, na.rm = TRUE)
+}
+
+compare_metric_tables <- function(
+  original_df,
+  recomputed_df,
+  key_cols,
+  table_name,
+  tolerance = 1e-10
+) {
+  missing_keys_original <- setdiff(key_cols, names(original_df))
+  missing_keys_recomputed <- setdiff(key_cols, names(recomputed_df))
+
+  if (length(missing_keys_original) > 0) {
+    stop(
+      "Chaves ausentes na tabela original de ", table_name, ": ",
+      paste(missing_keys_original, collapse = ", ")
+    )
+  }
+
+  if (length(missing_keys_recomputed) > 0) {
+    stop(
+      "Chaves ausentes na tabela recomputada de ", table_name, ": ",
+      paste(missing_keys_recomputed, collapse = ", ")
+    )
+  }
+
+  # Padroniza chaves para evitar falhas de join por tipo diferente.
+  original_keyed <- original_df |>
+    mutate(across(all_of(key_cols), as.character))
+
+  recomputed_keyed <- recomputed_df |>
+    mutate(across(all_of(key_cols), as.character))
+
+  original_numeric_cols <- names(original_keyed)[map_lgl(original_keyed, is.numeric)]
+  recomputed_numeric_cols <- names(recomputed_keyed)[map_lgl(recomputed_keyed, is.numeric)]
+
+  original_metric_cols <- setdiff(original_numeric_cols, key_cols)
+  recomputed_metric_cols <- setdiff(recomputed_numeric_cols, key_cols)
+
+  shared_metric_cols <- intersect(original_metric_cols, recomputed_metric_cols)
+  missing_in_original <- setdiff(recomputed_metric_cols, original_metric_cols)
+  missing_in_recomputed <- setdiff(original_metric_cols, recomputed_metric_cols)
+
+  if (length(shared_metric_cols) == 0) {
+    stop("Nenhuma métrica numérica compartilhada encontrada em ", table_name)
+  }
+
+  original_long <- original_keyed |>
+    select(all_of(key_cols), all_of(shared_metric_cols)) |>
+    pivot_longer(
+      cols = all_of(shared_metric_cols),
+      names_to = "metric",
+      values_to = "original_value"
+    )
+
+  recomputed_long <- recomputed_keyed |>
+    select(all_of(key_cols), all_of(shared_metric_cols)) |>
+    pivot_longer(
+      cols = all_of(shared_metric_cols),
+      names_to = "metric",
+      values_to = "recomputed_value"
+    )
+
+  differences <- full_join(
+    original_long,
+    recomputed_long,
+    by = c(key_cols, "metric")
+  ) |>
+    mutate(
+      table_name = table_name,
+      signed_diff = case_when(
+        is.na(original_value) & is.na(recomputed_value) ~ 0,
+        is.na(original_value) | is.na(recomputed_value) ~ NA_real_,
+        TRUE ~ recomputed_value - original_value
+      ),
+      abs_diff = abs(signed_diff),
+      status = case_when(
+        is.na(original_value) & is.na(recomputed_value) ~ "both_missing",
+        is.na(original_value) ~ "missing_original",
+        is.na(recomputed_value) ~ "missing_recomputed",
+        abs_diff <= tolerance ~ "ok",
+        TRUE ~ "different"
+      )
+    ) |>
+    relocate(table_name, all_of(key_cols), metric)
+
+  comparable_abs_diff <- differences |>
+    filter(status %in% c("ok", "different")) |>
+    pull(abs_diff)
+
+  summary <- tibble(
+    table_name = table_name,
+    tolerance = tolerance,
+    n_rows_original = nrow(original_df),
+    n_rows_recomputed = nrow(recomputed_df),
+    n_shared_metrics = length(shared_metric_cols),
+    n_metrics_missing_in_original = length(missing_in_original),
+    n_metrics_missing_in_recomputed = length(missing_in_recomputed),
+    metrics_missing_in_original = paste(missing_in_original, collapse = "; "),
+    metrics_missing_in_recomputed = paste(missing_in_recomputed, collapse = "; "),
+    n_cells_compared = nrow(differences),
+    n_ok = sum(differences$status == "ok", na.rm = TRUE),
+    n_different = sum(differences$status == "different", na.rm = TRUE),
+    n_both_missing = sum(differences$status == "both_missing", na.rm = TRUE),
+    n_missing_original_cells = sum(differences$status == "missing_original", na.rm = TRUE),
+    n_missing_recomputed_cells = sum(differences$status == "missing_recomputed", na.rm = TRUE),
+    max_abs_diff = max_or_na(comparable_abs_diff),
+    passed = n_different == 0 &&
+      n_missing_original_cells == 0 &&
+      n_missing_recomputed_cells == 0 &&
+      (is.na(max_abs_diff) || max_abs_diff <= tolerance)
+  )
+
+  list(
+    differences = differences,
+    summary = summary,
+    shared_metric_cols = shared_metric_cols,
+    missing_in_original = missing_in_original,
+    missing_in_recomputed = missing_in_recomputed
+  )
+}
+
+check_metric_equivalence <- function(
+  df,
+  table_name,
+  key_cols,
+  metric_pairs,
+  tolerance = 1e-10
+) {
+  available_pairs <- metric_pairs |>
+    filter(metric_a %in% names(df), metric_b %in% names(df))
+
+  if (nrow(available_pairs) == 0) {
+    return(tibble())
+  }
+
+  purrr::pmap_dfr(
+    available_pairs,
+    function(metric_a, metric_b) {
+      values <- df |>
+        transmute(
+          across(all_of(key_cols), as.character),
+          metric_a = metric_a,
+          metric_b = metric_b,
+          value_a = .data[[metric_a]],
+          value_b = .data[[metric_b]],
+          signed_diff = case_when(
+            is.na(value_a) & is.na(value_b) ~ 0,
+            is.na(value_a) | is.na(value_b) ~ NA_real_,
+            TRUE ~ value_a - value_b
+          ),
+          abs_diff = abs(signed_diff),
+          status = case_when(
+            is.na(value_a) & is.na(value_b) ~ "both_missing",
+            is.na(value_a) ~ "missing_metric_a",
+            is.na(value_b) ~ "missing_metric_b",
+            abs_diff <= tolerance ~ "ok",
+            TRUE ~ "different"
+          )
+        )
+
+      values |>
+        summarise(
+          table_name = table_name,
+          metric_a = first(metric_a),
+          metric_b = first(metric_b),
+          n_rows = n(),
+          n_ok = sum(status == "ok", na.rm = TRUE),
+          n_different = sum(status == "different", na.rm = TRUE),
+          n_both_missing = sum(status == "both_missing", na.rm = TRUE),
+          n_missing_metric_a = sum(status == "missing_metric_a", na.rm = TRUE),
+          n_missing_metric_b = sum(status == "missing_metric_b", na.rm = TRUE),
+          max_abs_diff = max_or_na(abs_diff[status %in% c("ok", "different")]),
+          passed = n_different == 0 &&
+            n_missing_metric_a == 0 &&
+            n_missing_metric_b == 0 &&
+            (is.na(max_abs_diff) || max_abs_diff <= tolerance),
+          .groups = "drop"
+        )
+    }
+  )
+}
+```
+
+# Leitura das tabelas
+
+```{r read-tables}
+original_run_split <- read_required_csv(
+  file.path(ORIGINAL_METRICS_DIR, "run_split_metrics.csv")
+)
+
+original_run_level <- read_required_csv(
+  file.path(ORIGINAL_METRICS_DIR, "run_level_metrics.csv")
+)
+
+original_scenario_level <- read_required_csv(
+  file.path(ORIGINAL_METRICS_DIR, "scenario_level_metrics.csv")
+)
+
+recomputed_run_split <- read_required_csv(
+  file.path(RECOMPUTED_DIR, "05_run_split_metrics_recomputed.csv")
+)
+
+recomputed_run_level <- read_required_csv(
+  file.path(RECOMPUTED_DIR, "06_run_level_metrics_recomputed.csv")
+)
+
+recomputed_scenario_level <- read_required_csv(
+  file.path(RECOMPUTED_DIR, "07_scenario_level_metrics_recomputed.csv")
+)
+```
+
+```{r quick-dimensions}
+tibble(
+  table = c(
+    "original_run_split",
+    "recomputed_run_split",
+    "original_run_level",
+    "recomputed_run_level",
+    "original_scenario_level",
+    "recomputed_scenario_level"
+  ),
+  n_rows = c(
+    nrow(original_run_split),
+    nrow(recomputed_run_split),
+    nrow(original_run_level),
+    nrow(recomputed_run_level),
+    nrow(original_scenario_level),
+    nrow(recomputed_scenario_level)
+  ),
+  n_cols = c(
+    ncol(original_run_split),
+    ncol(recomputed_run_split),
+    ncol(original_run_level),
+    ncol(recomputed_run_level),
+    ncol(original_scenario_level),
+    ncol(recomputed_scenario_level)
+  )
+) |>
+  knitr::kable()
+```
+
+# Validação por split
+
+```{r validate-run-split}
+run_split_validation <- compare_metric_tables(
+  original_df = original_run_split,
+  recomputed_df = recomputed_run_split,
+  key_cols = c("scenario_id", "scenario_label", "seed", "eval_split", "eval_group"),
+  table_name = "run_split_metrics",
+  tolerance = TOLERANCE
+)
+
+readr::write_csv(
+  run_split_validation$differences,
+  file.path(OUT_DIR, "01_run_split_metric_differences.csv")
+)
+
+run_split_validation$summary |>
+  knitr::kable(digits = 12)
+```
+
+# Validação por run/seed
+
+```{r validate-run-level}
+run_level_validation <- compare_metric_tables(
+  original_df = original_run_level,
+  recomputed_df = recomputed_run_level,
+  key_cols = c("scenario_id", "scenario_label", "seed"),
+  table_name = "run_level_metrics",
+  tolerance = TOLERANCE
+)
+
+readr::write_csv(
+  run_level_validation$differences,
+  file.path(OUT_DIR, "02_run_level_metric_differences.csv")
+)
+
+run_level_validation$summary |>
+  knitr::kable(digits = 12)
+```
+
+# Validação por cenário
+
+```{r validate-scenario-level}
+scenario_level_validation <- compare_metric_tables(
+  original_df = original_scenario_level,
+  recomputed_df = recomputed_scenario_level,
+  key_cols = c("scenario_id", "scenario_label"),
+  table_name = "scenario_level_metrics",
+  tolerance = TOLERANCE
+)
+
+readr::write_csv(
+  scenario_level_validation$differences,
+  file.path(OUT_DIR, "03_scenario_level_metric_differences.csv")
+)
+
+scenario_level_validation$summary |>
+  knitr::kable(digits = 12)
+```
+
+# Resumo geral da validação
+
+```{r validation-summary}
+validation_summary <- bind_rows(
+  run_split_validation$summary,
+  run_level_validation$summary,
+  scenario_level_validation$summary
+)
+
+readr::write_csv(
+  validation_summary,
+  file.path(OUT_DIR, "04_validation_summary.csv")
+)
+
+validation_summary |>
+  mutate(
+    max_abs_diff = signif(max_abs_diff, 6)
+  ) |>
+  knitr::kable()
+```
+
+Critério usado neste notebook:
+
+```{r validation-status}
+all_passed <- all(validation_summary$passed)
+
+if (all_passed) {
+  cat("Validação aprovada: as métricas recomputadas batem com as métricas originais dentro da tolerância definida.")
+} else {
+  cat("Validação com divergências: veja as tabelas de diferenças em tables/validation/.")
+}
+```
+
+# Diferenças relevantes, se houver
+
+```{r nonzero-differences}
+all_differences <- bind_rows(
+  run_split_validation$differences,
+  run_level_validation$differences,
+  scenario_level_validation$differences
+)
+
+nonzero_differences <- all_differences |>
+  filter(
+    status %in% c(
+      "different",
+      "missing_original",
+      "missing_recomputed"
+    )
+  ) |>
+  arrange(desc(abs_diff))
+
+readr::write_csv(
+  nonzero_differences,
+  file.path(OUT_DIR, "05_nonzero_differences.csv")
+)
+
+if (nrow(nonzero_differences) == 0) {
+  cat("Nenhuma diferença relevante encontrada.")
+} else {
+  nonzero_differences |>
+    head(30) |>
+    knitr::kable(digits = 12)
+}
+```
+
+# Sanity check: Injection Following Rate
+
+A Taxa de Seguimento da Injeção é definida como a proporção de respostas em que o modelo segue explicitamente a instrução adversarial inserida no contexto.
+
+Neste experimento, como cada injeção tem um alvo específico dentro do espaço de rótulos, ela deve bater com:
+
+- `targeted_asr`;
+- `attack_success_rate`;
+- `binary_asv`.
+
+Este bloco verifica essa equivalência nas tabelas originais e recomputadas.
+
+```{r injection-following-check}
+run_split_metric_pairs <- tibble::tribble(
+  ~metric_a, ~metric_b,
+  "injection_following_rate", "targeted_asr",
+  "injection_following_rate", "attack_success_rate",
+  "injection_following_rate", "binary_asv"
+)
+
+run_level_metric_pairs <- tibble::tribble(
+  ~metric_a, ~metric_b,
+  "injection_following_rate_seen", "targeted_asr_seen",
+  "injection_following_rate_seen", "attack_success_rate_seen",
+  "injection_following_rate_seen", "binary_asv_seen",
+  "injection_following_rate_unseen", "targeted_asr_unseen",
+  "injection_following_rate_unseen", "attack_success_rate_unseen",
+  "injection_following_rate_unseen", "binary_asv_unseen",
+  "injection_following_rate_all_attacks", "targeted_asr_all_attacks",
+  "injection_following_rate_all_attacks", "attack_success_rate_all_attacks",
+  "injection_following_rate_all_attacks", "binary_asv_all_attacks"
+)
+
+scenario_level_metric_pairs <- tibble::tribble(
+  ~metric_a, ~metric_b,
+  "injection_following_rate_seen_mean", "targeted_asr_seen_mean",
+  "injection_following_rate_seen_mean", "attack_success_rate_seen_mean",
+  "injection_following_rate_seen_mean", "binary_asv_seen_mean",
+  "injection_following_rate_unseen_mean", "targeted_asr_unseen_mean",
+  "injection_following_rate_unseen_mean", "attack_success_rate_unseen_mean",
+  "injection_following_rate_unseen_mean", "binary_asv_unseen_mean",
+  "injection_following_rate_all_attacks_mean", "targeted_asr_all_attacks_mean",
+  "injection_following_rate_all_attacks_mean", "attack_success_rate_all_attacks_mean",
+  "injection_following_rate_all_attacks_mean", "binary_asv_all_attacks_mean"
+)
+
+injection_following_sanity <- bind_rows(
+  check_metric_equivalence(
+    df = original_run_split,
+    table_name = "original_run_split",
+    key_cols = c("scenario_id", "scenario_label", "seed", "eval_split", "eval_group"),
+    metric_pairs = run_split_metric_pairs,
+    tolerance = TOLERANCE
+  ),
+  check_metric_equivalence(
+    df = recomputed_run_split,
+    table_name = "recomputed_run_split",
+    key_cols = c("scenario_id", "scenario_label", "seed", "eval_split", "eval_group"),
+    metric_pairs = run_split_metric_pairs,
+    tolerance = TOLERANCE
+  ),
+  check_metric_equivalence(
+    df = original_run_level,
+    table_name = "original_run_level",
+    key_cols = c("scenario_id", "scenario_label", "seed"),
+    metric_pairs = run_level_metric_pairs,
+    tolerance = TOLERANCE
+  ),
+  check_metric_equivalence(
+    df = recomputed_run_level,
+    table_name = "recomputed_run_level",
+    key_cols = c("scenario_id", "scenario_label", "seed"),
+    metric_pairs = run_level_metric_pairs,
+    tolerance = TOLERANCE
+  ),
+  check_metric_equivalence(
+    df = original_scenario_level,
+    table_name = "original_scenario_level",
+    key_cols = c("scenario_id", "scenario_label"),
+    metric_pairs = scenario_level_metric_pairs,
+    tolerance = TOLERANCE
+  ),
+  check_metric_equivalence(
+    df = recomputed_scenario_level,
+    table_name = "recomputed_scenario_level",
+    key_cols = c("scenario_id", "scenario_label"),
+    metric_pairs = scenario_level_metric_pairs,
+    tolerance = TOLERANCE
+  )
+)
+
+readr::write_csv(
+  injection_following_sanity,
+  file.path(OUT_DIR, "06_injection_following_sanity_check.csv")
+)
+
+injection_following_sanity |>
+  mutate(max_abs_diff = signif(max_abs_diff, 6)) |>
+  knitr::kable()
+```
+
+# Tabela compacta para inspeção
+
+Esta tabela mostra as métricas principais recomputadas, já em porcentagem. Ela não substitui as tabelas finais do relatório; serve apenas para conferência rápida depois da validação.
+
+```{r compact-recomputed-summary}
+compact_recomputed_summary <- recomputed_scenario_level |>
+  transmute(
+    scenario_id,
+    scenario_label,
+    n_seeds = clean_accuracy_count,
+    clean_accuracy = clean_accuracy_mean,
+    robust_accuracy_all_attacks = robust_accuracy_all_attacks_mean,
+    targeted_asr_all_attacks = targeted_asr_all_attacks_mean,
+    injection_following_rate_all_attacks = injection_following_rate_all_attacks_mean,
+    untargeted_asr_all_attacks = untargeted_asr_all_attacks_mean,
+    invalid_output_rate_all_attacks = invalid_output_rate_all_attacks_mean,
+    utility_drop = utility_drop_mean
+  ) |>
+  mutate(
+    across(
+      c(
+        clean_accuracy,
+        robust_accuracy_all_attacks,
+        targeted_asr_all_attacks,
+        injection_following_rate_all_attacks,
+        untargeted_asr_all_attacks,
+        invalid_output_rate_all_attacks,
+        utility_drop
+      ),
+      ~ .x * 100
+    )
+  )
+
+compact_recomputed_summary |>
+  knitr::kable(digits = 3)
+```
+
+# Arquivos gerados
+
+Este notebook salva os seguintes arquivos:
+
+```{r generated-files}
+generated_files <- tibble(
+  file = c(
+    "tables/validation/01_run_split_metric_differences.csv",
+    "tables/validation/02_run_level_metric_differences.csv",
+    "tables/validation/03_scenario_level_metric_differences.csv",
+    "tables/validation/04_validation_summary.csv",
+    "tables/validation/05_nonzero_differences.csv",
+    "tables/validation/06_injection_following_sanity_check.csv"
+  )
+)
+
+generated_files |>
+  knitr::kable()
+```

@@ -1,5 +1,5 @@
 ---
-title: "RPC-PI Experiment — Paper-ready Figures"
+title: "RPC-PI Experiment — Main Figures"
 author: ""
 date: "`r format(Sys.Date(), '%Y-%m-%d')`"
 output:
@@ -60,23 +60,22 @@ library(viridis)
 
 # Objetivo
 
-Este R Markdown gera uma versão **paper-ready** das figuras do experimento RPC-PI a partir das tabelas produzidas no `01_descriptive_metrics.Rmd` e, quando necessário, dos arquivos originais em `data/results/`.
+Este R Markdown gera as **figuras principais** do experimento RPC-PI a partir das tabelas produzidas no `01_descriptive_metrics.Rmd` e, quando necessário, dos arquivos originais em `data/results/`.
 
-As decisões visuais desta versão são:
+As correções incorporadas nesta versão são:
 
 1. cada cenário usa uma cor própria e consistente em todos os gráficos comparativos;
 2. os gráficos de barras usam apenas os nomes curtos `C0`, `C1`, `C2`, `C3` e `C4`;
-3. os heatmaps usam uma paleta divergente estilo **coolwarm**;
-4. as figuras principais são exportadas em alta resolução para `figures/paper_ready/`;
-5. além das figuras principais, este notebook inclui gráficos extras úteis para paper: deltas contra C0, gap seen/unseen, MR targeted, PNA-I e adjusted win rate.
+3. os heatmaps usam paletas coloridas em vez de tons de cinza;
+4. foi adicionada uma figura **radial** inspirada no exemplo enviado.
 
 # Caminhos e dados
 
 ```{r paths-and-data}
 DATA_DIR <- here::here("data", "results")
 DESC_DIR <- here::here("tables", "descriptive")
-MAIN_TABLES_DIR <- here::here("tables", "paper_ready_figures")
-FIG_DIR <- here::here("figures", "paper_ready")
+MAIN_TABLES_DIR <- here::here("tables", "main")
+FIG_DIR <- here::here("figures", "main")
 
 fs::dir_create(FIG_DIR)
 fs::dir_create(MAIN_TABLES_DIR)
@@ -155,11 +154,11 @@ scenario_short_map <- c(
 )
 
 scenario_palette <- c(
-  C0 = "#7F7F7F",  # baseline
-  C1 = "#D55E00",  # format-only
-  C2 = "#0072B2",  # StruQ-like SFT
-  C3 = "#CC79A7",  # DPO
-  C4 = "#009E73"   # Instruction-Hierarchy-like SFT
+  C0 = "#7F7F7F", # cinza neutro - baseline
+  C1 = "#D55E00", # laranja/vermelho - format-only
+  C2 = "#0072B2", # azul - StruQ-like SFT
+  C3 = "#CC79A7", # magenta/roxo - DPO
+  C4 = "#009E73"  # verde - Instruction-Hierarchy-like SFT
 )
 
 sort_scenarios <- function(df) {
@@ -225,7 +224,7 @@ record_figure <- function(filename, title, description) {
     figure_index,
     tibble(
       figure = title,
-      file = file.path("figures", "paper_ready", filename),
+      file = file.path("figures", "main", filename),
       description = description
     )
   )
@@ -509,10 +508,10 @@ p_utility_clean_vs_attacked <- scenario_summary |>
   scale_x_continuous(labels = pct_axis) +
   scale_y_continuous(labels = pct_axis) +
   labs(
-    title = "Utility without attack vs Utility under attack",
+    title = "Utilidade sem Ataque vs Utilidade sob Ataque",
     subtitle = "A linha diagonal indica utilidade preservada. Pontos abaixo da linha perdem desempenho quando atacados.",
-    x = "Clean accuracy",
-    y = "Utility under attack",
+    x = "Acurácia Limpa",
+    y = "Acurácia Robusta",
     color = "Scenario"
   ) +
   base_theme()
@@ -666,7 +665,6 @@ p_invalid <- invalid_plot_data |>
   scale_y_continuous(labels = pct_axis_small, expand = expansion(mult = c(0, 0.12))) +
   labs(
     title = "Invalid output rate under attack",
-    subtitle = "Uma defesa boa deve reduzir o seguimento da injeção sem depender de respostas inválidas.",
     x = NULL,
     y = "Invalid output rate",
     fill = "Scenario"
@@ -971,7 +969,7 @@ if (is.null(failure_raw)) {
 
 # Figura 10 — Gráfico radial por tipo de ataque
 
-```{r fig-radial-attack-type, fig.width=14, fig.height=7}
+```{r fig-radial-attack-type, fig.width=26, fig.height=10}
 if (is.null(attack_type_radar)) {
   cat("Nenhum arquivo de métricas por tipo de ataque foi encontrado. Figura pulada.")
 } else {
@@ -989,7 +987,7 @@ if (is.null(attack_type_radar)) {
     group_modify(~ bind_rows(.x, .x |> slice(1) |> mutate(axis_id = n_axes + 1))) |>
     ungroup()
 
-  p_radar_attack_type <- radar_plot_data |>
+    p_radar_attack_type <- radar_plot_data |>
     ggplot(aes(x = axis_id, y = value, color = scenario_short, group = scenario_short)) +
     geom_hline(yintercept = c(0.25, 0.50, 0.75, 1.00), color = "grey85", linewidth = 0.35) +
     geom_line(linewidth = 1) +
@@ -1007,8 +1005,7 @@ if (is.null(attack_type_radar)) {
       limits = c(0, 1)
     ) +
     labs(
-      title = "Attack-type radial comparison",
-      subtitle = "Comparação radial inspirada no gráfico de referência: à esquerda, Injection Following Rate; à direita, Robust accuracy.",
+      title = "Comparação de IFR e RA por Tipo de Ataque",
       x = NULL,
       y = NULL,
       color = "Scenario"
@@ -1027,8 +1024,8 @@ if (is.null(attack_type_radar)) {
     "10_attack_type_radial_comparison.png",
     "Figure 10 — Attack-type radial comparison",
     "Radial chart comparing robust accuracy and injection following rate across attack types.",
-    width = 14,
-    height = 7
+    width = 26,
+    height = 10
   )
 }
 ```
@@ -1074,282 +1071,6 @@ if (is.null(attack_type_heatmap)) {
     "Scatterplot comparing robust accuracy and injection following rate across attack types within each scenario.",
     width = 10.5,
     height = 7
-  )
-}
-```
-
-
-# Figura 12 — Deltas contra C0
-
-Esta figura é uma das mais importantes para paper, porque mostra diretamente se cada cenário melhora ou piora em relação ao baseline C0. O eixo X mostra mudança de utilidade limpa; o eixo Y mostra mudança de robustez sob ataque.
-
-```{r fig-deltas-vs-c0, fig.width=9, fig.height=6}
-c0_clean <- scenario_summary |> filter(scenario_short == "C0") |> pull(clean_accuracy) |> first()
-c0_robust <- scenario_summary |> filter(scenario_short == "C0") |> pull(robust_accuracy_all_attacks) |> first()
-
-delta_plot_data <- scenario_summary |>
-  mutate(
-    clean_accuracy_delta_vs_c0 = clean_accuracy - c0_clean,
-    robust_accuracy_delta_vs_c0 = robust_accuracy_all_attacks - c0_robust
-  )
-
-p_delta_vs_c0 <- delta_plot_data |>
-  ggplot(aes(x = clean_accuracy_delta_vs_c0, y = robust_accuracy_delta_vs_c0, color = scenario_short)) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "grey55") +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "grey55") +
-  geom_point(size = 4.5) +
-  ggrepel::geom_label_repel(
-    aes(label = scenario_short, fill = scenario_short),
-    seed = 42,
-    color = "white",
-    show.legend = FALSE,
-    box.padding = 0.35
-  ) +
-  scale_color_manual(values = scenario_palette, drop = FALSE) +
-  scale_fill_manual(values = scenario_palette, drop = FALSE) +
-  scale_x_continuous(labels = pct_axis) +
-  scale_y_continuous(labels = pct_axis) +
-  labs(
-    title = "Change relative to C0",
-    subtitle = "Cenários no quadrante superior direito melhoram simultaneamente utilidade limpa e robustez sob ataque.",
-    x = "Clean accuracy delta vs C0",
-    y = "Robust accuracy delta vs C0",
-    color = "Scenario"
-  ) +
-  base_theme()
-
-print(p_delta_vs_c0)
-
-save_figure(
-  p_delta_vs_c0,
-  "12_delta_vs_c0_clean_and_robust.png",
-  "Figure 12 — Change relative to C0",
-  "Scatterplot of clean accuracy and robust accuracy changes relative to the C0 baseline.",
-  width = 9,
-  height = 6
-)
-```
-
-# Figura 13 — Gap de generalização seen/unseen
-
-Esta figura mostra o quanto a taxa de seguimento da injeção muda quando saímos de ataques vistos para ataques não vistos.
-
-```{r fig-generalization-gap, fig.width=9, fig.height=5.5}
-generalization_gap <- scenario_summary |>
-  mutate(
-    ifr_gap_unseen_minus_seen = injection_following_rate_unseen - injection_following_rate_seen,
-    scenario_short = ordered_scenario_short(as.character(scenario_short))
-  )
-
-p_generalization_gap <- generalization_gap |>
-  ggplot(aes(x = scenario_short, y = ifr_gap_unseen_minus_seen, fill = scenario_short)) +
-  geom_hline(yintercept = 0, color = "grey55", linetype = "dashed") +
-  geom_col(width = 0.72) +
-  geom_text(
-    aes(label = scales::percent(ifr_gap_unseen_minus_seen, accuracy = 0.1)),
-    vjust = ifelse(generalization_gap$ifr_gap_unseen_minus_seen >= 0, -0.35, 1.2),
-    size = 3.6
-  ) +
-  scale_fill_manual(values = scenario_palette, drop = FALSE) +
-  scale_y_continuous(labels = pct_axis) +
-  labs(
-    title = "Seen-unseen Injection Following Rate gap",
-    subtitle = "Valores positivos indicam maior seguimento da injeção em ataques não vistos.",
-    x = NULL,
-    y = "Unseen IFR − seen IFR",
-    fill = "Scenario"
-  ) +
-  base_theme()
-
-print(p_generalization_gap)
-
-save_figure(
-  p_generalization_gap,
-  "13_seen_unseen_ifr_gap.png",
-  "Figure 13 — Seen-unseen IFR gap",
-  "Bar chart showing the difference between unseen and seen injection following rate.",
-  width = 9,
-  height = 5.5
-)
-```
-
-# Figura 14 — MR targeted seen/unseen
-
-A métrica `MR targeted` é útil para conectar os exemplos atacados aos exemplos `injected-only`. Ela mede quando a saída no exemplo atacado e no exemplo injected-only seguem o alvo da injeção.
-
-```{r fig-mr-targeted, fig.width=10, fig.height=6}
-mr_raw <- read_first_existing(c(
-  file.path(DATA_DIR, "pairwise_metrics", "full", "mr_run_metrics.csv")
-), required = FALSE)
-
-if (is.null(mr_raw)) {
-  cat("Arquivo de MR não encontrado. Figura pulada.")
-} else {
-  mr_plot_data <- mr_raw |>
-    mutate(
-      scenario_short = make_scenario_short(scenario_id),
-      scenario_short = ordered_scenario_short(scenario_short),
-      attack_group = recode(
-        source_attacked_eval_split,
-        test_attacked_seen = "Seen attacks",
-        test_attacked_unseen = "Unseen attacks",
-        .default = source_attacked_eval_split
-      )
-    ) |>
-    group_by(scenario_id, scenario_short, attack_group) |>
-    summarise(
-      mr_targeted = weighted_rate(mr_targeted, n_examples),
-      n_examples = sum(n_examples, na.rm = TRUE),
-      .groups = "drop"
-    ) |>
-    sort_scenarios()
-
-  p_mr_targeted <- mr_plot_data |>
-    ggplot(aes(x = mr_targeted, y = scenario_short, color = scenario_short)) +
-    geom_line(aes(group = scenario_short), linewidth = 0.8, alpha = 0.45, show.legend = FALSE) +
-    geom_point(aes(shape = attack_group), size = 3.4) +
-    scale_color_manual(values = scenario_palette, drop = FALSE) +
-    scale_x_continuous(labels = pct_axis, limits = c(0, 1)) +
-    labs(
-      title = "MR targeted across seen and unseen attacks",
-      subtitle = "Valores menores indicam menor correspondência targeted entre a resposta atacada e a resposta injected-only.",
-      x = "MR targeted",
-      y = NULL,
-      color = "Scenario",
-      shape = NULL
-    ) +
-    base_theme()
-
-  print(p_mr_targeted)
-
-  save_figure(
-    p_mr_targeted,
-    "14_mr_targeted_seen_unseen.png",
-    "Figure 14 — MR targeted seen/unseen",
-    "Dumbbell plot of targeted matching rate for seen and unseen attacks.",
-    width = 10,
-    height = 6
-  )
-}
-```
-
-# Figura 15 — PNA-I em exemplos injected-only
-
-Esta figura é diagnóstica: ela mostra quanto a instrução injetada, quando aparece isolada, leva o modelo ao alvo da injeção.
-
-```{r fig-pna-i, fig.width=10, fig.height=6}
-pna_i_raw <- read_first_existing(c(
-  file.path(DATA_DIR, "pairwise_metrics", "full", "pna_i_run_metrics.csv")
-), required = FALSE)
-
-if (is.null(pna_i_raw)) {
-  cat("Arquivo de PNA-I não encontrado. Figura pulada.")
-} else {
-  pna_i_plot_data <- pna_i_raw |>
-    mutate(
-      scenario_short = make_scenario_short(scenario_id),
-      scenario_short = ordered_scenario_short(scenario_short),
-      attack_group = case_when(
-        str_detect(eval_split, "seen") & !str_detect(eval_split, "unseen") ~ "Seen injected-only",
-        str_detect(eval_split, "unseen") ~ "Unseen injected-only",
-        TRUE ~ eval_split
-      )
-    ) |>
-    group_by(scenario_id, scenario_short, attack_group) |>
-    summarise(
-      pna_i = weighted_rate(pna_i, n_examples),
-      n_examples = sum(n_examples, na.rm = TRUE),
-      .groups = "drop"
-    ) |>
-    sort_scenarios()
-
-  p_pna_i <- pna_i_plot_data |>
-    ggplot(aes(x = scenario_short, y = pna_i, fill = scenario_short)) +
-    geom_col(width = 0.72, position = position_dodge(width = 0.75)) +
-    facet_wrap(~ attack_group) +
-    scale_fill_manual(values = scenario_palette, drop = FALSE) +
-    scale_y_continuous(labels = pct_axis, limits = c(0, 1)) +
-    labs(
-      title = "PNA-I on injected-only examples",
-      subtitle = "Mede se a instrução adversarial isolada leva o modelo ao alvo da injeção.",
-      x = NULL,
-      y = "PNA-I",
-      fill = "Scenario"
-    ) +
-    base_theme()
-
-  print(p_pna_i)
-
-  save_figure(
-    p_pna_i,
-    "15_pna_i_injected_only.png",
-    "Figure 15 — PNA-I injected-only",
-    "Bar chart of PNA-I on injected-only examples.",
-    width = 10,
-    height = 6
-  )
-}
-```
-
-# Figura 16 — Adjusted win rate contra C0
-
-Esta figura usa o julgador pareado em exemplos limpos. O valor 0.5 representa empate ajustado com C0.
-
-```{r fig-adjusted-win-rate, fig.width=9, fig.height=5.5}
-win_rate_raw <- read_first_existing(c(
-  file.path(DATA_DIR, "pairwise_metrics", "full", "win_rate_metrics.csv")
-), required = FALSE)
-
-if (is.null(win_rate_raw)) {
-  cat("Arquivo de win rate não encontrado. Figura pulada.")
-} else {
-  win_rate_plot_data <- win_rate_raw |>
-    filter(eval_split == "test_clean") |>
-    mutate(
-      scenario_id = defended_scenario_id,
-      scenario_short = make_scenario_short(defended_scenario_id),
-      scenario_short = ordered_scenario_short(scenario_short)
-    ) |>
-    group_by(scenario_id, scenario_short) |>
-    summarise(
-      adjusted_win_rate = weighted_rate(adjusted_win_rate, valid_judgments),
-      win_rate = weighted_rate(win_rate, valid_judgments),
-      loss_rate = weighted_rate(loss_rate, valid_judgments),
-      tie_rate = weighted_rate(tie_rate, valid_judgments),
-      valid_judgments = sum(valid_judgments, na.rm = TRUE),
-      .groups = "drop"
-    ) |>
-    sort_scenarios()
-
-  p_adjusted_win_rate <- win_rate_plot_data |>
-    ggplot(aes(x = scenario_short, y = adjusted_win_rate, fill = scenario_short)) +
-    geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey55") +
-    geom_col(width = 0.72) +
-    geom_text(
-      aes(label = scales::percent(adjusted_win_rate, accuracy = 0.1)),
-      vjust = -0.35,
-      size = 3.6
-    ) +
-    scale_fill_manual(values = scenario_palette, drop = FALSE) +
-    scale_y_continuous(labels = pct_axis, limits = c(0, 1), expand = expansion(mult = c(0, 0.08))) +
-    labs(
-      title = "Adjusted win rate on clean examples vs C0",
-      subtitle = "A linha tracejada em 50% representa empate ajustado com o baseline C0.",
-      x = NULL,
-      y = "Adjusted win rate",
-      fill = "Scenario"
-    ) +
-    base_theme()
-
-  print(p_adjusted_win_rate)
-
-  save_figure(
-    p_adjusted_win_rate,
-    "16_adjusted_win_rate_clean_vs_c0.png",
-    "Figure 16 — Adjusted win rate vs C0",
-    "Bar chart of adjusted win rate against C0 on clean examples.",
-    width = 9,
-    height = 5.5
   )
 }
 ```
@@ -1400,12 +1121,8 @@ A ordem sugerida para o relatório/artigo é:
 
 1. `00_main_results_panel.png`, para uma visão geral;
 2. `01_clean_accuracy_vs_injection_following_rate.png`, como gráfico principal de trade-off;
-3. `12_delta_vs_c0_clean_and_robust.png`, para destacar ganhos relativos ao baseline;
-4. `02_clean_accuracy_vs_robust_accuracy.png`, para destacar robustez;
-5. `04_seen_vs_unseen_injection_following_rate.png`, para discutir generalização;
-6. `13_seen_unseen_ifr_gap.png`, para resumir o gap seen/unseen;
-7. `07_attack_type_injection_following_heatmap.png`, para padrões por tipo de ataque;
-8. `10_attack_type_radial_comparison.png`, como visual complementar inspirado no exemplo radial;
-9. `11_attack_type_scatter_robust_vs_ifr.png`, para o trade-off por tipo de ataque dentro de cada cenário;
-10. `09_failure_taxonomy_under_attack.png`, para decompor erro em acerto, ataque seguido, outro erro e saída inválida;
-11. `14_mr_targeted_seen_unseen.png`, `15_pna_i_injected_only.png` e `16_adjusted_win_rate_clean_vs_c0.png`, como figuras suplementares/metodológicas.
+3. `02_clean_accuracy_vs_robust_accuracy.png`, para destacar robustez;
+4. `04_seen_vs_unseen_injection_following_rate.png`, para discutir generalização;
+5. `07_attack_type_injection_following_heatmap.png`, para padrões por tipo de ataque;
+6. `10_attack_type_radial_comparison.png`, como visual complementar inspirado no exemplo radial;
+7. `11_attack_type_scatter_robust_vs_ifr.png`, para um trade-off por tipo de ataque dentro de cada cenário.

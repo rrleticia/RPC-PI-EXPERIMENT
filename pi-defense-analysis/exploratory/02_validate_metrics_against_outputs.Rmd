@@ -1,5 +1,5 @@
 ---
-title: "02 — Validação das métricas recomputadas"
+title: "RPC Prompt Injection Experiment — Validação das métricas recomputadas"
 author: "RPC-PI Experiment"
 date: "`r format(Sys.Date(), '%Y-%m-%d')`"
 output:

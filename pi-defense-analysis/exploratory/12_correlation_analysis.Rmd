@@ -1442,6 +1442,525 @@ Scenario-level correlations are based on only five points: C0, C1, C2, C3, and C
 ")
 ```
 
+
+# Analise complementar: Pearson, Spearman, Kendall e distribuicoes
+
+A analise original privilegiava **Spearman**, porque varias metricas sao proporcoes entre 0 e 1, com possiveis empates, assimetria e relacoes monotônicas, mas nao necessariamente lineares.
+
+Nesta extensao, o notebook passa a calcular:
+
+```text
+Pearson  = correlacao linear
+Spearman = correlacao monotônica por ranks
+Kendall  = correlacao ordinal por pares concordantes/discordantes
+```
+
+Tambem adicionamos graficos de distribuicao para verificar se Pearson faz sentido ou se Spearman/Kendall sao mais adequados.
+
+```{r correlation-methods-distribution-helpers}
+correlation_methods <- c("pearson", "spearman", "kendall")
+
+if (exists("scenario_seed_metrics")) {
+  correlation_distribution_data <- scenario_seed_metrics
+} else if (exists("scenario_seed_correlation_data")) {
+  correlation_distribution_data <- scenario_seed_correlation_data
+} else if (exists("scenario_level_metrics")) {
+  correlation_distribution_data <- scenario_level_metrics
+} else if (exists("scenario_summary")) {
+  correlation_distribution_data <- scenario_summary
+} else if (exists("run_level")) {
+  correlation_distribution_data <- run_level
+} else {
+  # Fallback para knit independente: tenta carregar tabelas ja exportadas pelos notebooks anteriores.
+  # O notebook pode ser knitado de dentro de uma subpasta; por isso procuramos em "." e também em "..".
+  path_candidates <- function(...) {
+    relative_path <- file.path(...)
+    c(
+      file.path(".", relative_path),
+      file.path("..", relative_path)
+    )
+  }
+
+  candidate_metric_files <- c(
+    path_candidates("tables", "descriptive", "06_run_level_metrics_recomputed.csv"),
+    path_candidates("tables", "descriptive", "07_scenario_level_metrics_recomputed.csv"),
+    path_candidates("tables", "descriptive", "08_scenario_summary_fraction.csv"),
+    path_candidates("tables", "accuracy_analysis", "01_scenario_accuracy_summary.csv"),
+    path_candidates("tables", "asv_analysis", "01_scenario_asv_summary.csv")
+  )
+
+  existing_metric_file <- candidate_metric_files[file.exists(candidate_metric_files)][1]
+
+  if (length(existing_metric_file) > 0 && !is.na(existing_metric_file)) {
+    correlation_distribution_data <- readr::read_csv(
+      existing_metric_file,
+      show_col_types = FALSE
+    )
+  } else {
+    # Ultimo fallback: tenta reconstruir metricas diretamente dos outputs de inferencia.
+    inference_candidate_files <- c(
+      path_candidates("tables", "descriptive", "01_inference_compact.csv"),
+      path_candidates("tables", "correlation_analysis", "01_inference_compact.csv")
+    )
+
+    existing_inference_file <- inference_candidate_files[file.exists(inference_candidate_files)][1]
+
+    if (length(existing_inference_file) > 0 && !is.na(existing_inference_file)) {
+      inference_for_correlation <- readr::read_csv(
+        existing_inference_file,
+        show_col_types = FALSE
+      )
+    } else {
+      inference_jsonl_dirs <- c(
+        file.path(".", "data", "results", "inference", "full"),
+        file.path("..", "data", "results", "inference", "full")
+      )
+
+      inference_jsonl_files <- purrr::map(
+        inference_jsonl_dirs[file.exists(inference_jsonl_dirs)],
+        ~ list.files(
+          path = .x,
+          pattern = "\\.jsonl$",
+          recursive = TRUE,
+          full.names = TRUE
+        )
+      ) |>
+        unlist(use.names = FALSE)
+
+      if (length(inference_jsonl_files) == 0) {
+        stop(
+          paste(
+            "Nao encontrei objetos, CSVs em ./tables ou ../tables, nem JSONL de inferencia em",
+            "./data/results/inference/full ou ../data/results/inference/full.",
+            "Verifique o diretorio de trabalho usado no Knit."
+          )
+        )
+      }
+
+      read_jsonl_safe_local <- function(path) {
+        lines <- readLines(path, warn = FALSE, encoding = "UTF-8")
+        parsed <- purrr::map(lines, function(line) {
+          tryCatch(jsonlite::fromJSON(line, flatten = TRUE), error = function(e) NULL)
+        })
+        parsed <- purrr::compact(parsed)
+        if (length(parsed) == 0) return(tibble::tibble())
+        dplyr::bind_rows(parsed) |>
+          dplyr::mutate(source_file = path)
+      }
+
+      inference_for_correlation <- purrr::map_dfr(
+        inference_jsonl_files,
+        read_jsonl_safe_local
+      )
+    }
+
+    infer_col <- function(df, candidates, default = NA_character_) {
+      found <- candidates[candidates %in% names(df)][1]
+      if (length(found) == 0 || is.na(found)) {
+        rep(default, nrow(df))
+      } else {
+        df[[found]]
+      }
+    }
+
+    inference_for_correlation <- inference_for_correlation |>
+      dplyr::mutate(
+        scenario_id = as.character(infer_col(cur_data_all(), c("scenario_id", "scenario", "scenario_name"))),
+        scenario_short = dplyr::case_when(
+          stringr::str_detect(scenario_id, "c0") ~ "C0",
+          stringr::str_detect(scenario_id, "c1") ~ "C1",
+          stringr::str_detect(scenario_id, "c2") ~ "C2",
+          stringr::str_detect(scenario_id, "c3") ~ "C3",
+          stringr::str_detect(scenario_id, "c4") ~ "C4",
+          TRUE ~ scenario_id
+        ),
+        seed = suppressWarnings(as.integer(infer_col(cur_data_all(), c("seed", "experiment_seed"), NA_character_))),
+        split = as.character(infer_col(cur_data_all(), c("eval_split", "split", "split_name"))),
+        normalized_output = as.character(infer_col(cur_data_all(), c("normalized_output", "prediction", "output"))),
+        expected_answer = as.character(infer_col(cur_data_all(), c("expected_answer", "target", "label"))),
+        attack_target = as.character(infer_col(cur_data_all(), c("attack_target", "injection_target"), NA_character_)),
+        is_attacked = stringr::str_detect(split, "attacked|seen|unseen"),
+        is_clean = stringr::str_detect(split, "clean"),
+        is_correct_flag = dplyr::case_when(
+          "is_correct_flag" %in% names(cur_data_all()) ~ as.logical(.data$is_correct_flag),
+          "is_correct" %in% names(cur_data_all()) ~ as.logical(.data$is_correct),
+          TRUE ~ normalized_output == expected_answer
+        ),
+        followed_attack_flag = dplyr::case_when(
+          "followed_attack_flag" %in% names(cur_data_all()) ~ as.logical(.data$followed_attack_flag),
+          "attack_success_flag" %in% names(cur_data_all()) ~ as.logical(.data$attack_success_flag),
+          TRUE ~ !is.na(attack_target) & attack_target != "" & normalized_output == attack_target
+        ),
+        invalid_output_flag = dplyr::case_when(
+          "invalid_output_flag" %in% names(cur_data_all()) ~ as.logical(.data$invalid_output_flag),
+          "is_invalid_output" %in% names(cur_data_all()) ~ as.logical(.data$is_invalid_output),
+          TRUE ~ is.na(normalized_output) | normalized_output == "" |
+            (!(normalized_output %in% unique(expected_answer)) &
+               !(normalized_output %in% unique(attack_target)))
+        )
+      )
+
+    correlation_distribution_data <- inference_for_correlation |>
+      dplyr::group_by(scenario_id, scenario_short, seed) |>
+      dplyr::summarise(
+        clean_accuracy = mean(is_correct_flag[is_clean], na.rm = TRUE),
+        robust_accuracy_all_attacks = mean(is_correct_flag[is_attacked], na.rm = TRUE),
+        task_success_rate = mean(is_correct_flag, na.rm = TRUE),
+        injection_following_rate_all_attacks = mean(followed_attack_flag[is_attacked], na.rm = TRUE),
+        targeted_asr_all_attacks = mean(followed_attack_flag[is_attacked], na.rm = TRUE),
+        invalid_output_rate_all_attacks = mean(invalid_output_flag[is_attacked], na.rm = TRUE),
+        invalid_output_rate_clean = mean(invalid_output_flag[is_clean], na.rm = TRUE),
+        n_examples = dplyr::n(),
+        .groups = "drop"
+      ) |>
+      dplyr::mutate(
+        utility_drop = clean_accuracy[scenario_short == "C0"][1] - clean_accuracy
+      )
+  }
+}
+
+metric_candidates <- c(
+  "clean_accuracy",
+  "robust_accuracy",
+  "robust_accuracy_all_attacks",
+  "task_success_rate",
+  "injection_following_rate",
+  "injection_following_rate_all_attacks",
+  "asv_rate",
+  "targeted_asr_all_attacks",
+  "invalid_output_rate",
+  "invalid_output_rate_all_attacks",
+  "utility_drop",
+  "adjusted_win_rate",
+  "net_win_rate",
+  "non_tie_win_rate"
+)
+
+available_metrics <- metric_candidates[metric_candidates %in% names(correlation_distribution_data)]
+
+# Fallback robusto:
+# se os nomes esperados nao existirem nesse objeto, usa todas as colunas numericas
+# que nao sejam identificadores. Isso evita o erro do pivot_longer com cols vazio.
+if (length(available_metrics) == 0) {
+  available_metrics <- correlation_distribution_data |>
+    dplyr::select(where(is.numeric)) |>
+    dplyr::select(-any_of(c("seed", "n", "n_examples", "n_seeds"))) |>
+    names()
+}
+
+if (length(available_metrics) == 0) {
+  stop("Nenhuma coluna numerica de metrica foi encontrada para a analise de correlacao.")
+}
+
+id_cols <- c("scenario_id", "scenario_short", "seed")
+existing_id_cols <- id_cols[id_cols %in% names(correlation_distribution_data)]
+
+correlation_distribution_data <- correlation_distribution_data |>
+  dplyr::select(any_of(c(existing_id_cols, available_metrics)))
+
+if (!("scenario_short" %in% names(correlation_distribution_data))) {
+  if ("scenario_id" %in% names(correlation_distribution_data)) {
+    correlation_distribution_data <- correlation_distribution_data |>
+      dplyr::mutate(scenario_short = as.character(scenario_id))
+  } else {
+    correlation_distribution_data <- correlation_distribution_data |>
+      dplyr::mutate(scenario_short = "All")
+  }
+} else {
+  correlation_distribution_data <- correlation_distribution_data |>
+    dplyr::mutate(scenario_short = as.character(scenario_short))
+}
+
+metric_long_distribution <- correlation_distribution_data |>
+  tidyr::pivot_longer(
+    cols = all_of(available_metrics),
+    names_to = "metric",
+    values_to = "value"
+  ) |>
+  dplyr::filter(!is.na(value))
+
+readr::write_csv(
+  metric_long_distribution,
+  file.path(OUT_TABLE_DIR, "13_metric_distribution_long.csv")
+)
+
+safe_cor_test <- function(x, y, method) {
+  ok <- !is.na(x) & !is.na(y)
+  x <- x[ok]
+  y <- y[ok]
+
+  if (length(x) < 3 || length(unique(x)) < 2 || length(unique(y)) < 2) {
+    return(tibble::tibble(
+      method = method,
+      estimate = NA_real_,
+      p_value = NA_real_,
+      n = length(x)
+    ))
+  }
+
+  out <- tryCatch(
+    suppressWarnings(stats::cor.test(x, y, method = method, exact = FALSE)),
+    error = function(e) NULL
+  )
+
+  if (is.null(out)) {
+    tibble::tibble(
+      method = method,
+      estimate = NA_real_,
+      p_value = NA_real_,
+      n = length(x)
+    )
+  } else {
+    tibble::tibble(
+      method = method,
+      estimate = unname(out$estimate),
+      p_value = out$p.value,
+      n = length(x)
+    )
+  }
+}
+```
+
+## Distribuicao das metricas
+
+```{r metric-distribution-histograms, fig.width=11, fig.height=7}
+p_metric_histograms <- metric_long_distribution |>
+  ggplot2::ggplot(ggplot2::aes(x = value)) +
+  ggplot2::geom_histogram(bins = 12, alpha = 0.75) +
+  ggplot2::facet_wrap(~ metric, scales = "free", ncol = 3) +
+  ggplot2::labs(
+    title = "Distribuicao das metricas usadas na correlacao",
+    subtitle = "Histogramas ajudam a identificar assimetria, empates, extremos e pouca variabilidade.",
+    x = "Valor da metrica",
+    y = "Frequencia"
+  ) +
+  base_theme()
+
+print(p_metric_histograms)
+
+ggplot2::ggsave(
+  file.path(OUT_FIG_DIR, "13_metric_distribution_histograms.png"),
+  plot = p_metric_histograms,
+  width = 11,
+  height = 7,
+  dpi = 320,
+  bg = "white"
+)
+```
+
+```{r metric-density-and-qq-plots, fig.width=11, fig.height=7}
+p_metric_density <- metric_long_distribution |>
+  ggplot2::ggplot(ggplot2::aes(x = value)) +
+  ggplot2::geom_density(na.rm = TRUE) +
+  ggplot2::facet_wrap(~ metric, scales = "free", ncol = 3) +
+  ggplot2::labs(
+    title = "Densidade das metricas",
+    subtitle = "Curvas assimetricas ou concentradas nos extremos indicam cautela com Pearson.",
+    x = "Valor da metrica",
+    y = "Densidade"
+  ) +
+  base_theme()
+
+print(p_metric_density)
+
+ggplot2::ggsave(
+  file.path(OUT_FIG_DIR, "14_metric_density_plots.png"),
+  plot = p_metric_density,
+  width = 11,
+  height = 7,
+  dpi = 320,
+  bg = "white"
+)
+
+p_metric_qq <- metric_long_distribution |>
+  ggplot2::ggplot(ggplot2::aes(sample = value)) +
+  ggplot2::stat_qq(size = 1.4, alpha = 0.75) +
+  ggplot2::stat_qq_line(linewidth = 0.35) +
+  ggplot2::facet_wrap(~ metric, scales = "free", ncol = 3) +
+  ggplot2::labs(
+    title = "QQ plots das metricas",
+    subtitle = "Desvios fortes da linha sugerem distribuicao nao-normal.",
+    x = "Quantis teoricos",
+    y = "Quantis observados"
+  ) +
+  base_theme()
+
+print(p_metric_qq)
+
+ggplot2::ggsave(
+  file.path(OUT_FIG_DIR, "15_metric_qq_plots.png"),
+  plot = p_metric_qq,
+  width = 11,
+  height = 7,
+  dpi = 320,
+  bg = "white"
+)
+```
+
+## Pearson, Spearman e Kendall
+
+```{r pearson-spearman-kendall-correlations}
+metric_pairs <- tidyr::expand_grid(
+  metric_x = available_metrics,
+  metric_y = available_metrics
+) |>
+  dplyr::filter(metric_x < metric_y)
+
+correlation_three_methods <- metric_pairs |>
+  dplyr::rowwise() |>
+  dplyr::mutate(
+    result = list(
+      purrr::map_dfr(
+        correlation_methods,
+        ~ safe_cor_test(
+          correlation_distribution_data[[metric_x]],
+          correlation_distribution_data[[metric_y]],
+          .x
+        )
+      )
+    )
+  ) |>
+  tidyr::unnest(result) |>
+  dplyr::ungroup() |>
+  dplyr::mutate(
+    abs_estimate = abs(estimate),
+    strength = dplyr::case_when(
+      is.na(abs_estimate) ~ NA_character_,
+      abs_estimate >= 0.80 ~ "very strong",
+      abs_estimate >= 0.60 ~ "strong",
+      abs_estimate >= 0.40 ~ "moderate",
+      abs_estimate >= 0.20 ~ "weak",
+      TRUE ~ "very weak"
+    )
+  ) |>
+  dplyr::arrange(method, dplyr::desc(abs_estimate))
+
+readr::write_csv(
+  correlation_three_methods,
+  file.path(OUT_TABLE_DIR, "14_pairwise_correlations_pearson_spearman_kendall.csv")
+)
+
+correlation_three_methods |>
+  dplyr::mutate(
+    estimate = round(estimate, 3),
+    p_value = signif(p_value, 3)
+  ) |>
+  dplyr::arrange(method, dplyr::desc(abs_estimate)) |>
+  dplyr::slice_head(n = 30) |>
+  knitr::kable(
+    caption = "Top correlacoes por metodo: Pearson, Spearman e Kendall."
+  )
+```
+
+```{r pearson-spearman-kendall-heatmap, fig.width=12, fig.height=8}
+correlation_heatmap_three_methods <- correlation_three_methods |>
+  dplyr::mutate(
+    pair_label = paste(metric_x, metric_y, sep = " vs ")
+  )
+
+p_three_method_heatmap <- correlation_heatmap_three_methods |>
+  ggplot2::ggplot(ggplot2::aes(x = method, y = pair_label, fill = estimate)) +
+  ggplot2::geom_tile(color = "white", linewidth = 0.25) +
+  ggplot2::scale_fill_gradient2(
+    low = "#B2182B",
+    mid = "white",
+    high = "#2166AC",
+    midpoint = 0,
+    limits = c(-1, 1),
+    na.value = "grey90"
+  ) +
+  ggplot2::labs(
+    title = "Comparacao entre Pearson, Spearman e Kendall",
+    subtitle = "Cada linha e um par de metricas; cada coluna e um metodo de correlacao.",
+    x = "Metodo",
+    y = "Par de metricas",
+    fill = "Correlacao"
+  ) +
+  base_theme() +
+  ggplot2::theme(
+    axis.text.y = ggplot2::element_text(size = 6)
+  )
+
+print(p_three_method_heatmap)
+
+ggplot2::ggsave(
+  file.path(OUT_FIG_DIR, "16_pearson_spearman_kendall_heatmap.png"),
+  plot = p_three_method_heatmap,
+  width = 12,
+  height = 8,
+  dpi = 320,
+  bg = "white"
+)
+```
+
+## Diagnostico visual das principais correlacoes
+
+```{r top-correlation-scatter-diagnostics, fig.width=11, fig.height=7}
+diagnostic_pairs <- correlation_three_methods |>
+  dplyr::filter(method == "spearman") |>
+  dplyr::arrange(dplyr::desc(abs_estimate)) |>
+  dplyr::slice_head(n = 9) |>
+  dplyr::select(metric_x, metric_y)
+
+diagnostic_scatter_data <- purrr::pmap_dfr(
+  diagnostic_pairs,
+  function(metric_x, metric_y) {
+    correlation_distribution_data |>
+      dplyr::transmute(
+        metric_x = metric_x,
+        metric_y = metric_y,
+        x = .data[[metric_x]],
+        y = .data[[metric_y]],
+        scenario_short = scenario_short
+      )
+  }
+) |>
+  dplyr::mutate(pair_label = paste(metric_x, metric_y, sep = " vs "))
+
+readr::write_csv(
+  diagnostic_scatter_data,
+  file.path(OUT_TABLE_DIR, "15_top_correlation_scatter_diagnostics.csv")
+)
+
+p_diagnostic_scatter <- diagnostic_scatter_data |>
+  ggplot2::ggplot(ggplot2::aes(x = x, y = y, color = scenario_short)) +
+  ggplot2::geom_point(size = 2.6, alpha = 0.85) +
+  ggplot2::geom_smooth(method = "lm", se = FALSE, linewidth = 0.45, color = "grey35") +
+  ggplot2::geom_smooth(method = "loess", se = FALSE, linewidth = 0.45, linetype = "dashed", color = "black") +
+  ggplot2::facet_wrap(~ pair_label, scales = "free", ncol = 3) +
+  ggplot2::scale_color_manual(values = scenario_palette, drop = FALSE) +
+  ggplot2::labs(
+    title = "Diagnostico visual das principais correlacoes",
+    subtitle = "Linha continua = tendencia linear; linha tracejada = tendencia suavizada. Diferencas sugerem possivel nao-linearidade.",
+    x = "Metrica X",
+    y = "Metrica Y",
+    color = "Cenario"
+  ) +
+  base_theme()
+
+print(p_diagnostic_scatter)
+
+ggplot2::ggsave(
+  file.path(OUT_FIG_DIR, "17_top_correlation_scatter_diagnostics.png"),
+  plot = p_diagnostic_scatter,
+  width = 11,
+  height = 7,
+  dpi = 320,
+  bg = "white"
+)
+```
+
+## Nota metodologica
+
+```text
+Pearson  -> melhor quando a relacao e aproximadamente linear e sem muitos outliers.
+Spearman -> melhor quando a relacao e monotonica, mesmo se nao for linear.
+Kendall  -> mais conservador para amostras pequenas, empates e dados ordinais.
+```
+
+Como muitas metricas deste experimento sao proporcoes agregadas, com teto, piso, empates e poucos pontos por cenario, Spearman continua sendo uma escolha segura para a leitura principal. Pearson e Kendall entram como analises de sensibilidade.
+
+
 # Generated files
 
 Tables are saved in:

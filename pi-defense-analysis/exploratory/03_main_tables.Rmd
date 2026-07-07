@@ -142,12 +142,67 @@ fmt_pct <- function(x, digits = 2) {
   ifelse(is.na(x), "—", sprintf(paste0("%.", digits, "f%%"), x * 100))
 }
 
+fmt_pct_pm <- function(mean, sd, digits = 2) {
+  mean <- as.numeric(mean)
+  sd <- as.numeric(sd)
+
+  out <- ifelse(
+    is.na(mean),
+    "—",
+    ifelse(
+      is.na(sd),
+      sprintf(paste0("%.", digits, "f%%"), mean * 100),
+      sprintf(
+        paste0("%.", digits, "f%% ± %.", digits, "f"),
+        mean * 100,
+        sd * 100
+      )
+    )
+  )
+
+  out
+}
+
+fmt_pp_pm <- function(mean, sd, digits = 2) {
+  mean <- as.numeric(mean)
+  sd <- as.numeric(sd)
+
+  out <- ifelse(
+    is.na(mean),
+    "—",
+    ifelse(
+      is.na(sd),
+      sprintf(paste0("%+.", digits, "f p.p."), mean * 100),
+      sprintf(
+        paste0("%+.", digits, "f p.p. ± %.", digits, "f"),
+        mean * 100,
+        sd * 100
+      )
+    )
+  )
+
+  out
+}
+
 fmt_pp <- function(x, digits = 2) {
   ifelse(is.na(x), "—", sprintf(paste0("%+.", digits, "f p.p."), x * 100))
 }
 
 fmt_num <- function(x, digits = 2) {
   ifelse(is.na(x), "—", sprintf(paste0("%.", digits, "f"), x))
+}
+
+safe_weighted_mean <- function(x, w) {
+  x <- as.numeric(x)
+  w <- as.numeric(w)
+
+  ok <- !is.na(x) & !is.na(w) & w > 0
+
+  if (sum(ok) == 0) {
+    return(NA_real_)
+  }
+
+  weighted.mean(x[ok], w = w[ok], na.rm = TRUE)
 }
 
 percentify <- function(df, cols) {
@@ -175,6 +230,11 @@ run_level <- read_first_existing(c(
   file.path(DATA_DIR, "metrics", "full", "run_level_metrics.csv")
 )) |>
   sort_scenarios()
+
+run_split_metrics <- read_first_existing(c(
+  file.path(DESC_DIR, "05_run_split_metrics_recomputed.csv"),
+  file.path(DATA_DIR, "metrics", "full", "run_split_metrics.csv")
+), required = FALSE)
 
 failure_taxonomy_raw <- read_first_existing(c(
   file.path(DESC_DIR, "10_failure_taxonomy_recomputed.csv"),
@@ -218,38 +278,121 @@ add_scenario_info <- function(df) {
 
   joined
 }
+
+# Task Success Rate:
+# taxa de respostas corretas considerando qualquer split.
+# Preferimos calcular a partir da tabela run_split_metrics, porque ela tem
+# task_success_rate por split e n_examples como peso.
+if (!is.null(run_split_metrics) && "task_success_rate" %in% names(run_split_metrics)) {
+  run_split_for_tsr <- run_split_metrics |>
+    mutate(
+      weight = coalesce_col(cur_data_all(), c("n_examples", "total", "n"), default = 1)
+    )
+
+  task_success_by_scenario <- run_split_for_tsr |>
+    group_by(scenario_id) |>
+    summarise(
+      task_success_rate_from_split = safe_weighted_mean(task_success_rate, weight),
+      .groups = "drop"
+    )
+
+  task_success_by_run <- run_split_for_tsr |>
+    group_by(scenario_id, seed) |>
+    summarise(
+      task_success_rate_from_split = safe_weighted_mean(task_success_rate, weight),
+      .groups = "drop"
+    )
+
+  task_success_by_scenario_stats <- task_success_by_run |>
+    group_by(scenario_id) |>
+    summarise(
+      task_success_rate_mean_from_run = mean(task_success_rate_from_split, na.rm = TRUE),
+      task_success_rate_sd_from_run = sd(task_success_rate_from_split, na.rm = TRUE),
+      task_success_rate_n_from_run = sum(!is.na(task_success_rate_from_split)),
+      .groups = "drop"
+    ) |>
+    mutate(
+      task_success_rate_mean_from_run = ifelse(is.nan(task_success_rate_mean_from_run), NA_real_, task_success_rate_mean_from_run),
+      task_success_rate_sd_from_run = ifelse(is.nan(task_success_rate_sd_from_run), NA_real_, task_success_rate_sd_from_run)
+    )
+} else {
+  task_success_by_scenario <- tibble(
+    scenario_id = character(),
+    task_success_rate_from_split = numeric()
+  )
+
+  task_success_by_run <- tibble(
+    scenario_id = character(),
+    seed = numeric(),
+    task_success_rate_from_split = numeric()
+  )
+
+  task_success_by_scenario_stats <- tibble(
+    scenario_id = character(),
+    task_success_rate_mean_from_run = numeric(),
+    task_success_rate_sd_from_run = numeric(),
+    task_success_rate_n_from_run = integer()
+  )
+}
 ```
 
 # Tabela 1 — Resultados principais por cenário
 
-Esta é a tabela principal do relatório. Ela combina utilidade limpa, robustez sob ataque e métricas de seguimento da injeção.
+Esta é a tabela principal do relatório. Ela combina Task Success Rate geral, utilidade limpa, robustez sob ataque e métricas de seguimento da injeção.
 
 **Observação:** `utility_drop` foi calculado como `clean_accuracy(C0) - clean_accuracy(scenario)`. Portanto, valores negativos indicam que o cenário teve **maior acurácia limpa que o C0**.
+
+Nas colunas com `±`, o primeiro valor é a média entre seeds e o segundo valor é o desvio-padrão entre seeds. Para C0 e C1, quando houver apenas uma seed, o desvio-padrão pode aparecer como ausente.
 
 ```{r main-scenario-table}
 main_scenario_results <- tibble(
   scenario_id = scenario_level$scenario_id,
   scenario_label = scenario_level$scenario_label,
-  n_seeds = col_or_na(scenario_level, "clean_accuracy_count"),
+  n_seeds = coalesce_col(scenario_level, c("task_success_rate_count", "clean_accuracy_count")),
+  task_success_rate = coalesce_col(scenario_level, c("task_success_rate_mean", "task_success_rate")),
+  task_success_rate_sd = coalesce_col(scenario_level, c("task_success_rate_std", "task_success_rate_sd")),
   clean_accuracy = col_or_na(scenario_level, "clean_accuracy_mean"),
+  clean_accuracy_sd = coalesce_col(scenario_level, c("clean_accuracy_std", "clean_accuracy_sd")),
   utility_drop = col_or_na(scenario_level, "utility_drop_mean"),
+  utility_drop_sd = coalesce_col(scenario_level, c("utility_drop_std", "utility_drop_sd")),
   robust_accuracy_all_attacks = col_or_na(scenario_level, "robust_accuracy_all_attacks_mean"),
+  robust_accuracy_all_attacks_sd = coalesce_col(scenario_level, c("robust_accuracy_all_attacks_std", "robust_accuracy_all_attacks_sd")),
   targeted_asr_all_attacks = col_or_na(scenario_level, "targeted_asr_all_attacks_mean"),
+  targeted_asr_all_attacks_sd = coalesce_col(scenario_level, c("targeted_asr_all_attacks_std", "targeted_asr_all_attacks_sd")),
   injection_following_rate_all_attacks = col_or_na(scenario_level, "injection_following_rate_all_attacks_mean"),
+  injection_following_rate_all_attacks_sd = coalesce_col(scenario_level, c("injection_following_rate_all_attacks_std", "injection_following_rate_all_attacks_sd")),
   untargeted_asr_all_attacks = col_or_na(scenario_level, "untargeted_asr_all_attacks_mean"),
-  invalid_output_rate_all_attacks = col_or_na(scenario_level, "invalid_output_rate_all_attacks_mean")
+  untargeted_asr_all_attacks_sd = coalesce_col(scenario_level, c("untargeted_asr_all_attacks_std", "untargeted_asr_all_attacks_sd")),
+  invalid_output_rate_all_attacks = col_or_na(scenario_level, "invalid_output_rate_all_attacks_mean"),
+  invalid_output_rate_all_attacks_sd = coalesce_col(scenario_level, c("invalid_output_rate_all_attacks_std", "invalid_output_rate_all_attacks_sd"))
 ) |>
+  left_join(task_success_by_scenario, by = "scenario_id") |>
+  left_join(task_success_by_scenario_stats, by = "scenario_id") |>
+  mutate(
+    task_success_rate = coalesce(task_success_rate, task_success_rate_mean_from_run, task_success_rate_from_split),
+    task_success_rate_sd = coalesce(task_success_rate_sd, task_success_rate_sd_from_run)
+  ) |>
+  select(-task_success_rate_from_split, -task_success_rate_mean_from_run, -task_success_rate_sd_from_run, -task_success_rate_n_from_run) |>
   sort_scenarios()
 
 main_scenario_results_percent <- main_scenario_results |>
   percentify(c(
+    "task_success_rate",
+    "task_success_rate_sd",
     "clean_accuracy",
+    "clean_accuracy_sd",
     "utility_drop",
+    "utility_drop_sd",
     "robust_accuracy_all_attacks",
+    "robust_accuracy_all_attacks_sd",
     "targeted_asr_all_attacks",
+    "targeted_asr_all_attacks_sd",
     "injection_following_rate_all_attacks",
+    "injection_following_rate_all_attacks_sd",
     "untargeted_asr_all_attacks",
-    "invalid_output_rate_all_attacks"
+    "untargeted_asr_all_attacks_sd",
+    "invalid_output_rate_all_attacks",
+    "invalid_output_rate_all_attacks_sd"
   ))
 
 write_main_csv(main_scenario_results, "01_main_scenario_results_fraction.csv")
@@ -259,17 +402,18 @@ main_scenario_results |>
   transmute(
     Scenario = scenario_label,
     `N seeds` = n_seeds,
-    `Clean accuracy` = fmt_pct(clean_accuracy),
-    `Utility drop` = fmt_pp(utility_drop),
-    `Robust accuracy` = fmt_pct(robust_accuracy_all_attacks),
-    `Targeted ASR` = fmt_pct(targeted_asr_all_attacks),
-    `Injection following rate` = fmt_pct(injection_following_rate_all_attacks),
-    `Untargeted ASR` = fmt_pct(untargeted_asr_all_attacks),
-    `Invalid output rate` = fmt_pct(invalid_output_rate_all_attacks)
+    `Task success rate` = fmt_pct_pm(task_success_rate, task_success_rate_sd),
+    `Clean accuracy` = fmt_pct_pm(clean_accuracy, clean_accuracy_sd),
+    `Utility drop` = fmt_pp_pm(utility_drop, utility_drop_sd),
+    `Robust accuracy` = fmt_pct_pm(robust_accuracy_all_attacks, robust_accuracy_all_attacks_sd),
+    `Targeted ASR` = fmt_pct_pm(targeted_asr_all_attacks, targeted_asr_all_attacks_sd),
+    `Injection following rate` = fmt_pct_pm(injection_following_rate_all_attacks, injection_following_rate_all_attacks_sd),
+    `Untargeted ASR` = fmt_pct_pm(untargeted_asr_all_attacks, untargeted_asr_all_attacks_sd),
+    `Invalid output rate` = fmt_pct_pm(invalid_output_rate_all_attacks, invalid_output_rate_all_attacks_sd)
   ) |>
   knitr::kable(
     caption = "Tabela 1 — Resultados principais por cenário.",
-    align = "lcccccccc"
+    align = "lccccccccc"
   )
 ```
 
@@ -329,11 +473,13 @@ Esta tabela mostra a variação por seed dos cenários treinados: C2, C3 e C4.
 
 ```{r seed-level-table}
 seed_level_trained <- run_level |>
+  left_join(task_success_by_run, by = c("scenario_id", "seed")) |>
   filter(scenario_id %in% c("c2_struq_sft", "c3_secalign_dpo", "c4_ih_sft")) |>
   transmute(
     scenario_id,
     scenario_label,
     seed,
+    task_success_rate = coalesce_col(cur_data_all(), c("task_success_rate", "task_success_rate_from_split")),
     clean_accuracy,
     utility_drop,
     robust_accuracy_all_attacks,
@@ -349,6 +495,7 @@ seed_level_trained <- run_level |>
 
 seed_level_trained_percent <- seed_level_trained |>
   percentify(c(
+    "task_success_rate",
     "clean_accuracy",
     "utility_drop",
     "robust_accuracy_all_attacks",
@@ -364,6 +511,7 @@ seed_level_trained |>
   transmute(
     Scenario = scenario_label,
     Seed = seed,
+    `Task success rate` = fmt_pct(task_success_rate),
     `Clean accuracy` = fmt_pct(clean_accuracy),
     `Utility drop` = fmt_pp(utility_drop),
     `Robust accuracy` = fmt_pct(robust_accuracy_all_attacks),
@@ -373,7 +521,7 @@ seed_level_trained |>
   ) |>
   knitr::kable(
     caption = "Tabela 3 — Métricas por seed nos cenários treinados.",
-    align = "lccccccc"
+    align = "lcccccccc"
   )
 ```
 
@@ -383,6 +531,7 @@ Aqui resumimos a estabilidade dos cenários nas métricas principais. Para C0 e 
 
 ```{r seed-stability-table}
 key_stability_metrics <- c(
+  "task_success_rate",
   "clean_accuracy",
   "robust_accuracy_all_attacks",
   "targeted_asr_all_attacks",
@@ -402,7 +551,12 @@ safe_range <- function(x) {
 # a Injection Following Rate explícita mesmo quando o arquivo original
 # não traz essa métrica nomeada separadamente.
 run_level_for_stability <- run_level |>
+  left_join(task_success_by_run, by = c("scenario_id", "seed")) |>
   mutate(
+    task_success_rate = dplyr::coalesce(
+      coalesce_col(cur_data_all(), c("task_success_rate")),
+      task_success_rate_from_split
+    ),
     injection_following_rate_all_attacks = dplyr::coalesce(
       col_or_na(run_level, "injection_following_rate_all_attacks"),
       col_or_na(run_level, "targeted_asr_all_attacks")
@@ -432,6 +586,7 @@ seed_stability_key <- run_level_for_stability |>
   mutate(
     direction = case_when(
       metric %in% c(
+        "task_success_rate",
         "clean_accuracy",
         "robust_accuracy_all_attacks"
       ) ~ "higher",
@@ -457,6 +612,7 @@ seed_stability_key <- run_level_for_stability |>
 seed_stability_key <- seed_stability_key |>
   mutate(
     metric_label = case_when(
+      metric == "task_success_rate" ~ "Task success rate",
       metric == "clean_accuracy" ~ "Clean accuracy",
       metric == "robust_accuracy_all_attacks" ~ "Robust accuracy",
       metric == "targeted_asr_all_attacks" ~ "Targeted ASR",
@@ -482,6 +638,7 @@ seed_stability_key |>
     Metric = metric_label,
     Direction = direction,
     `N seeds` = n,
+    `Mean ± SD` = fmt_pct_pm(mean, std),
     Mean = fmt_pct(mean),
     SD = fmt_pct(std),
     Range = fmt_pct(range),
@@ -489,7 +646,7 @@ seed_stability_key |>
   ) |>
   knitr::kable(
     caption = "Tabela 4 — Estabilidade das principais métricas entre seeds.",
-    align = "lllccccc"
+    align = "lllcccccc"
   )
 ```
 

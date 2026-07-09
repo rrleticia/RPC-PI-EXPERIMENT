@@ -1,0 +1,11 @@
+{
+  "scenario_id": "c4_ih_sft",
+  "seed": 1009,
+  "eval_split": "test_injected_only_seen",
+  "status": "completed",
+  "started_at_utc": "2026-07-09T05:01:44.725518+00:00",
+  "finished_at_utc": "2026-07-09T05:11:02.763414+00:00",
+  "elapsed_seconds": 558.0378475189209,
+  "output_path": "/workspace/pi-defense-exp/results/injected_only/full/c4_ih_sft/seed_1009/test_injected_only_seen.jsonl",
+  "rows": 9380
+}

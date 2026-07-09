@@ -1,0 +1,11 @@
+{
+  "scenario_id": "c3_secalign_dpo",
+  "seed": 1009,
+  "eval_split": "test_injected_only_unseen",
+  "status": "completed",
+  "started_at_utc": "2026-07-09T04:09:20.715278+00:00",
+  "finished_at_utc": "2026-07-09T04:14:49.067964+00:00",
+  "elapsed_seconds": 328.3526473045349,
+  "output_path": "/workspace/pi-defense-exp/results/injected_only/full/c3_secalign_dpo/seed_1009/test_injected_only_unseen.jsonl",
+  "rows": 5628
+}

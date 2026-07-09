@@ -1,0 +1,11 @@
+{
+  "scenario_id": "c2_struq_sft",
+  "seed": 1009,
+  "eval_split": "test_injected_only_seen",
+  "status": "completed",
+  "started_at_utc": "2026-07-09T02:51:49.920577+00:00",
+  "finished_at_utc": "2026-07-09T03:01:01.104403+00:00",
+  "elapsed_seconds": 551.1837544441223,
+  "output_path": "/workspace/pi-defense-exp/results/injected_only/full/c2_struq_sft/seed_1009/test_injected_only_seen.jsonl",
+  "rows": 9380
+}

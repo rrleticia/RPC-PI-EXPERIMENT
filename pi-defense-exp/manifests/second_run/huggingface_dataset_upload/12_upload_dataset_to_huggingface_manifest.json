@@ -1,0 +1,126 @@
+{
+  "notebook": "12_upload_dataset_to_huggingface",
+  "created_at_utc": "2026-07-09T02:22:31.651134+00:00",
+  "project_root": "/workspace/pi-defense-exp",
+  "dataset_repo_id": "leinha/pi-defense-experiment-dataset",
+  "repo_type": "dataset",
+  "dry_run": false,
+  "private_repo": true,
+  "acknowledge_dataset_content": true,
+  "no_intermediate_heavy_copy": true,
+  "local_metadata_dir": "/workspace/pi-defense-exp/exports/huggingface_dataset_upload",
+  "log_dir": "/workspace/pi-defense-exp/logs/huggingface_dataset_upload",
+  "manifest_dir": "/workspace/pi-defense-exp/manifests/huggingface_dataset_upload",
+  "source_folders": [
+    {
+      "source_path": "/workspace/pi-defense-exp/data/canonical",
+      "target_path": "data/canonical",
+      "description": "Canonical clean and attacked JSONL files."
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/data/views",
+      "target_path": "data/views",
+      "description": "Training and evaluation views used by the scenarios."
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/configs",
+      "target_path": "configs",
+      "description": "Experiment and training configuration files."
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/manifests/data",
+      "target_path": "manifests/data",
+      "description": "Dataset creation manifests."
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/manifests/environment",
+      "target_path": "manifests/environment",
+      "description": "Environment setup manifests."
+    }
+  ],
+  "file_count": 22,
+  "estimated_total_size_mb": 36.66295623779297,
+  "folder_upload_records": [
+    {
+      "source_path": "/workspace/pi-defense-exp/data/canonical",
+      "path_in_repo": "data/canonical",
+      "status": "completed",
+      "started_at_utc": "2026-07-09T02:22:29.791630+00:00",
+      "finished_at_utc": "2026-07-09T02:22:30.026886+00:00",
+      "elapsed_seconds": 0.2352452278137207
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/data/views",
+      "path_in_repo": "data/views",
+      "status": "completed",
+      "started_at_utc": "2026-07-09T02:22:30.027078+00:00",
+      "finished_at_utc": "2026-07-09T02:22:30.428535+00:00",
+      "elapsed_seconds": 0.40144824981689453
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/configs",
+      "path_in_repo": "configs",
+      "status": "completed",
+      "started_at_utc": "2026-07-09T02:22:30.428753+00:00",
+      "finished_at_utc": "2026-07-09T02:22:30.624655+00:00",
+      "elapsed_seconds": 0.19589638710021973
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/manifests/data",
+      "path_in_repo": "manifests/data",
+      "status": "completed",
+      "started_at_utc": "2026-07-09T02:22:30.624827+00:00",
+      "finished_at_utc": "2026-07-09T02:22:30.990750+00:00",
+      "elapsed_seconds": 0.3659183979034424
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/manifests/environment",
+      "path_in_repo": "manifests/environment",
+      "status": "completed",
+      "started_at_utc": "2026-07-09T02:22:30.990916+00:00",
+      "finished_at_utc": "2026-07-09T02:22:31.578252+00:00",
+      "elapsed_seconds": 0.5873279571533203
+    }
+  ],
+  "remote_file_count": 30,
+  "remote_files_sample": [
+    ".gitattributes",
+    "LICENSE",
+    "README.md",
+    "configs/experiment.yaml",
+    "configs/training_plan.yaml",
+    "data/canonical/test_attacked_seen.jsonl",
+    "data/canonical/test_attacked_unseen.jsonl",
+    "data/canonical/test_clean.jsonl",
+    "data/canonical/train_attacked_seen.jsonl",
+    "data/canonical/train_clean.jsonl",
+    "data/canonical/validation_attacked_seen.jsonl",
+    "data/canonical/validation_clean.jsonl",
+    "data/views/evaluation/test_attacked_seen.jsonl",
+    "data/views/evaluation/test_attacked_unseen.jsonl",
+    "data/views/evaluation/test_clean.jsonl",
+    "data/views/ih/train_sft.jsonl",
+    "data/views/ih/validation_sft.jsonl",
+    "data/views/secalign/train_dpo.jsonl",
+    "data/views/secalign/validation_dpo.jsonl",
+    "data/views/struq/train_sft.jsonl",
+    "data/views/struq/validation_sft.jsonl",
+    "manifests/data/02_dataset_creation_manifest.json",
+    "manifests/data/02_dataset_creation_manifest.md",
+    "manifests/environment/01_environment_setup_manifest.json",
+    "manifests/environment/01_environment_setup_manifest.md",
+    "metadata/dry_run_summary.json",
+    "metadata/experiment_dataset_upload_manifest.json",
+    "metadata/file_index.csv",
+    "metadata/file_index.json",
+    "metadata/missing_optional_sources.json"
+  ],
+  "missing_sources": [],
+  "metadata_files": [
+    "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/README.md",
+    "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/experiment_dataset_upload_manifest.json",
+    "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/file_index.csv",
+    "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/file_index.json",
+    "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/missing_optional_sources.json"
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "scenario_id": "c0_base",
+  "seed": 42,
+  "status": "skipped_existing",
+  "stage": "injected_only",
+  "base_model_id": "meta-llama/Llama-3.1-8B-Instruct",
+  "adapter_path": "NaN",
+  "prompt_strategy": "plain",
+  "result_dir": "/workspace/pi-defense-exp/results/injected_only/full/c0_base/seed_42",
+  "run_log_dir": "/workspace/pi-defense-exp/logs/pairwise_metrics/runs/injected_only/c0_base/seed_42",
+  "started_at_utc": "NaN",
+  "finished_at_utc": "2026-07-09T02:21:49.417736+00:00",
+  "splits": [
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_injected_only_seen",
+      "path": "/workspace/pi-defense-exp/results/injected_only/full/c0_base/seed_42/test_injected_only_seen.jsonl",
+      "rows": 9380,
+      "status": "skipped_existing"
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "eval_split": "test_injected_only_unseen",
+      "path": "/workspace/pi-defense-exp/results/injected_only/full/c0_base/seed_42/test_injected_only_unseen.jsonl",
+      "rows": 5628,
+      "status": "skipped_existing"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "scenario_id": "c2_struq_sft",
+  "scenario_label": "C2 — StruQ-like SFT",
+  "seed": 42,
+  "split": "test_attacked_unseen",
+  "status": "completed",
+  "run_mode": "full",
+  "started_at_utc": "2026-06-29T21:29:07.719831+00:00",
+  "finished_at_utc": "2026-06-29T21:33:51.412446+00:00",
+  "elapsed_seconds": 283.69259452819824,
+  "rows": 5628,
+  "output_path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_42/test_attacked_unseen.jsonl",
+  "adapter_path": "/workspace/pi-defense-exp/adapters/struq/seed_42",
+  "prompt_strategy": "struq",
+  "generation_config": {
+    "max_new_tokens": 8,
+    "do_sample": false,
+    "num_beams": 1
+  },
+  "normalized_null_count": 0
+}

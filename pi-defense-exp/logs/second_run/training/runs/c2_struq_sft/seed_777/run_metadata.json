@@ -1,0 +1,21 @@
+{
+  "scenario": "c2_struq_sft",
+  "seed": 777,
+  "method": "sft",
+  "status": "completed",
+  "started_at_utc": "2026-07-08T14:22:24.047521+00:00",
+  "finished_at_utc": "2026-07-08T14:51:47.843186+00:00",
+  "output_dir": "/workspace/pi-defense-exp/adapters/struq/seed_777",
+  "run_log_dir": "/workspace/pi-defense-exp/logs/training/runs/c2_struq_sft/seed_777",
+  "train_rows": 4200,
+  "validation_rows": 700,
+  "elapsed_seconds": 1763.7956383228302,
+  "train_metrics": {
+    "train_runtime": 1754.0335,
+    "train_samples_per_second": 2.394,
+    "train_steps_per_second": 0.15,
+    "total_flos": 2.6539631964463104e+16,
+    "train_loss": 0.6705074079136432,
+    "epoch": 1.0
+  }
+}

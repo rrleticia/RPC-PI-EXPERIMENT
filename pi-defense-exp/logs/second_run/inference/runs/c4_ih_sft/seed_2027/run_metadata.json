@@ -1,0 +1,77 @@
+{
+  "scenario_id": "c4_ih_sft",
+  "scenario_label": "C4 — Instruction-Hierarchy-like SFT",
+  "seed": 2027,
+  "status": "completed",
+  "run_mode": "full",
+  "started_at_utc": "2026-07-09T01:39:32.360531+00:00",
+  "finished_at_utc": "2026-07-09T02:06:31.259321+00:00",
+  "elapsed_seconds": 1618.8987772464752,
+  "adapter_path": "/workspace/pi-defense-exp/adapters/ih/seed_2027",
+  "prompt_strategy": "instruction_hierarchy",
+  "splits": [
+    {
+      "scenario_id": "c4_ih_sft",
+      "scenario_label": "C4 — Instruction-Hierarchy-like SFT",
+      "seed": 2027,
+      "split": "test_clean",
+      "status": "completed",
+      "run_mode": "full",
+      "started_at_utc": "2026-07-09T01:39:39.837561+00:00",
+      "finished_at_utc": "2026-07-09T01:42:38.014163+00:00",
+      "elapsed_seconds": 178.17657852172852,
+      "rows": 1876,
+      "output_path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_2027/test_clean.jsonl",
+      "adapter_path": "/workspace/pi-defense-exp/adapters/ih/seed_2027",
+      "prompt_strategy": "instruction_hierarchy",
+      "generation_config": {
+        "max_new_tokens": 8,
+        "do_sample": false,
+        "num_beams": 1
+      },
+      "normalized_null_count": 0
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "scenario_label": "C4 — Instruction-Hierarchy-like SFT",
+      "seed": 2027,
+      "split": "test_attacked_seen",
+      "status": "completed",
+      "run_mode": "full",
+      "started_at_utc": "2026-07-09T01:42:38.055659+00:00",
+      "finished_at_utc": "2026-07-09T01:57:23.400299+00:00",
+      "elapsed_seconds": 885.3446288108826,
+      "rows": 9380,
+      "output_path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_2027/test_attacked_seen.jsonl",
+      "adapter_path": "/workspace/pi-defense-exp/adapters/ih/seed_2027",
+      "prompt_strategy": "instruction_hierarchy",
+      "generation_config": {
+        "max_new_tokens": 8,
+        "do_sample": false,
+        "num_beams": 1
+      },
+      "normalized_null_count": 0
+    },
+    {
+      "scenario_id": "c4_ih_sft",
+      "scenario_label": "C4 — Instruction-Hierarchy-like SFT",
+      "seed": 2027,
+      "split": "test_attacked_unseen",
+      "status": "completed",
+      "run_mode": "full",
+      "started_at_utc": "2026-07-09T01:57:23.429374+00:00",
+      "finished_at_utc": "2026-07-09T02:06:31.253824+00:00",
+      "elapsed_seconds": 547.8244397640228,
+      "rows": 5628,
+      "output_path": "/workspace/pi-defense-exp/results/inference/full/c4_ih_sft/seed_2027/test_attacked_unseen.jsonl",
+      "adapter_path": "/workspace/pi-defense-exp/adapters/ih/seed_2027",
+      "prompt_strategy": "instruction_hierarchy",
+      "generation_config": {
+        "max_new_tokens": 8,
+        "do_sample": false,
+        "num_beams": 1
+      },
+      "normalized_null_count": 0
+    }
+  ]
+}

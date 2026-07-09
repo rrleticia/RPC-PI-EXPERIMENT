@@ -1,0 +1,41 @@
+{
+  "scenario_id": "c0_base",
+  "scenario_label": "C0 — Base model",
+  "seed": 42,
+  "status": "completed",
+  "run_mode": "full",
+  "started_at_utc": "2026-07-08T20:50:02.598515+00:00",
+  "finished_at_utc": "2026-07-08T20:50:08.118468+00:00",
+  "elapsed_seconds": 5.519942760467529,
+  "adapter_path": null,
+  "prompt_strategy": "plain",
+  "splits": [
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "split": "test_clean",
+      "status": "skipped_existing",
+      "output_path": "/workspace/pi-defense-exp/results/inference/full/c0_base/seed_42/test_clean.jsonl",
+      "rows": 1876,
+      "run_mode": "full"
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "split": "test_attacked_seen",
+      "status": "skipped_existing",
+      "output_path": "/workspace/pi-defense-exp/results/inference/full/c0_base/seed_42/test_attacked_seen.jsonl",
+      "rows": 9380,
+      "run_mode": "full"
+    },
+    {
+      "scenario_id": "c0_base",
+      "seed": 42,
+      "split": "test_attacked_unseen",
+      "status": "skipped_existing",
+      "output_path": "/workspace/pi-defense-exp/results/inference/full/c0_base/seed_42/test_attacked_unseen.jsonl",
+      "rows": 5628,
+      "run_mode": "full"
+    }
+  ]
+}

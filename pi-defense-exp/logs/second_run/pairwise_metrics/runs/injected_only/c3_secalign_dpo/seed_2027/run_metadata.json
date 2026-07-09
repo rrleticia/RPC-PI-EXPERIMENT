@@ -1,0 +1,38 @@
+{
+  "scenario_id": "c3_secalign_dpo",
+  "seed": 2027,
+  "status": "completed_or_reused",
+  "stage": "injected_only",
+  "base_model_id": "meta-llama/Llama-3.1-8B-Instruct",
+  "adapter_path": "/workspace/pi-defense-exp/adapters/secalign/seed_2027",
+  "prompt_strategy": "secalign",
+  "result_dir": "/workspace/pi-defense-exp/results/injected_only/full/c3_secalign_dpo/seed_2027",
+  "run_log_dir": "/workspace/pi-defense-exp/logs/pairwise_metrics/runs/injected_only/c3_secalign_dpo/seed_2027",
+  "started_at_utc": "2026-07-09T04:14:49.786479+00:00",
+  "finished_at_utc": "2026-07-09T04:31:11.371662+00:00",
+  "elapsed_seconds": 981.5851538181305,
+  "splits": [
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 2027,
+      "eval_split": "test_injected_only_seen",
+      "status": "completed",
+      "started_at_utc": "2026-07-09T04:14:58.923875+00:00",
+      "finished_at_utc": "2026-07-09T04:24:50.545890+00:00",
+      "elapsed_seconds": 591.6219706535339,
+      "output_path": "/workspace/pi-defense-exp/results/injected_only/full/c3_secalign_dpo/seed_2027/test_injected_only_seen.jsonl",
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "seed": 2027,
+      "eval_split": "test_injected_only_unseen",
+      "status": "completed",
+      "started_at_utc": "2026-07-09T04:24:50.546229+00:00",
+      "finished_at_utc": "2026-07-09T04:31:11.371265+00:00",
+      "elapsed_seconds": 380.82499718666077,
+      "output_path": "/workspace/pi-defense-exp/results/injected_only/full/c3_secalign_dpo/seed_2027/test_injected_only_unseen.jsonl",
+      "rows": 5628
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "scenario_id": "c2_struq_sft",
+  "seed": 2027,
+  "status": "completed_or_reused",
+  "stage": "injected_only",
+  "base_model_id": "meta-llama/Llama-3.1-8B-Instruct",
+  "adapter_path": "/workspace/pi-defense-exp/adapters/struq/seed_2027",
+  "prompt_strategy": "struq",
+  "result_dir": "/workspace/pi-defense-exp/results/injected_only/full/c2_struq_sft/seed_2027",
+  "run_log_dir": "/workspace/pi-defense-exp/logs/pairwise_metrics/runs/injected_only/c2_struq_sft/seed_2027",
+  "started_at_utc": "2026-07-09T03:06:39.651860+00:00",
+  "finished_at_utc": "2026-07-09T03:21:34.399935+00:00",
+  "elapsed_seconds": 894.7480511665344,
+  "splits": [
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 2027,
+      "eval_split": "test_injected_only_seen",
+      "status": "completed",
+      "started_at_utc": "2026-07-09T03:06:48.013970+00:00",
+      "finished_at_utc": "2026-07-09T03:15:57.556727+00:00",
+      "elapsed_seconds": 549.5427069664001,
+      "output_path": "/workspace/pi-defense-exp/results/injected_only/full/c2_struq_sft/seed_2027/test_injected_only_seen.jsonl",
+      "rows": 9380
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "seed": 2027,
+      "eval_split": "test_injected_only_unseen",
+      "status": "completed",
+      "started_at_utc": "2026-07-09T03:15:57.557109+00:00",
+      "finished_at_utc": "2026-07-09T03:21:34.399535+00:00",
+      "elapsed_seconds": 336.8423984050751,
+      "output_path": "/workspace/pi-defense-exp/results/injected_only/full/c2_struq_sft/seed_2027/test_injected_only_unseen.jsonl",
+      "rows": 5628
+    }
+  ]
+}

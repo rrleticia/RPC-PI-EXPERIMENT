@@ -1,0 +1,77 @@
+{
+  "scenario_id": "c3_secalign_dpo",
+  "scenario_label": "C3 — SecAlign-like DPO",
+  "seed": 1009,
+  "status": "completed",
+  "run_mode": "full",
+  "started_at_utc": "2026-07-08T23:26:53.687008+00:00",
+  "finished_at_utc": "2026-07-08T23:52:11.298739+00:00",
+  "elapsed_seconds": 1517.6117129325867,
+  "adapter_path": "/workspace/pi-defense-exp/adapters/secalign/seed_1009",
+  "prompt_strategy": "secalign",
+  "splits": [
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "scenario_label": "C3 — SecAlign-like DPO",
+      "seed": 1009,
+      "split": "test_clean",
+      "status": "completed",
+      "run_mode": "full",
+      "started_at_utc": "2026-07-08T23:27:00.420149+00:00",
+      "finished_at_utc": "2026-07-08T23:29:51.817508+00:00",
+      "elapsed_seconds": 171.3973352909088,
+      "rows": 1876,
+      "output_path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_1009/test_clean.jsonl",
+      "adapter_path": "/workspace/pi-defense-exp/adapters/secalign/seed_1009",
+      "prompt_strategy": "secalign",
+      "generation_config": {
+        "max_new_tokens": 8,
+        "do_sample": false,
+        "num_beams": 1
+      },
+      "normalized_null_count": 2
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "scenario_label": "C3 — SecAlign-like DPO",
+      "seed": 1009,
+      "split": "test_attacked_seen",
+      "status": "completed",
+      "run_mode": "full",
+      "started_at_utc": "2026-07-08T23:29:51.858815+00:00",
+      "finished_at_utc": "2026-07-08T23:43:39.474980+00:00",
+      "elapsed_seconds": 827.616152048111,
+      "rows": 9380,
+      "output_path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_1009/test_attacked_seen.jsonl",
+      "adapter_path": "/workspace/pi-defense-exp/adapters/secalign/seed_1009",
+      "prompt_strategy": "secalign",
+      "generation_config": {
+        "max_new_tokens": 8,
+        "do_sample": false,
+        "num_beams": 1
+      },
+      "normalized_null_count": 8
+    },
+    {
+      "scenario_id": "c3_secalign_dpo",
+      "scenario_label": "C3 — SecAlign-like DPO",
+      "seed": 1009,
+      "split": "test_attacked_unseen",
+      "status": "completed",
+      "run_mode": "full",
+      "started_at_utc": "2026-07-08T23:43:39.504747+00:00",
+      "finished_at_utc": "2026-07-08T23:52:11.292928+00:00",
+      "elapsed_seconds": 511.7881679534912,
+      "rows": 5628,
+      "output_path": "/workspace/pi-defense-exp/results/inference/full/c3_secalign_dpo/seed_1009/test_attacked_unseen.jsonl",
+      "adapter_path": "/workspace/pi-defense-exp/adapters/secalign/seed_1009",
+      "prompt_strategy": "secalign",
+      "generation_config": {
+        "max_new_tokens": 8,
+        "do_sample": false,
+        "num_beams": 1
+      },
+      "normalized_null_count": 3
+    }
+  ]
+}

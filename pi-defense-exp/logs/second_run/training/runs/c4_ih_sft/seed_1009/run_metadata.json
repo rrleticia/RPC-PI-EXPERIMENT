@@ -1,0 +1,21 @@
+{
+  "scenario": "c4_ih_sft",
+  "seed": 1009,
+  "method": "sft",
+  "status": "completed",
+  "started_at_utc": "2026-07-08T18:09:26.512438+00:00",
+  "finished_at_utc": "2026-07-08T18:39:28.227432+00:00",
+  "output_dir": "/workspace/pi-defense-exp/adapters/ih/seed_1009",
+  "run_log_dir": "/workspace/pi-defense-exp/logs/training/runs/c4_ih_sft/seed_1009",
+  "train_rows": 4200,
+  "validation_rows": 700,
+  "elapsed_seconds": 1801.7149789333344,
+  "train_metrics": {
+    "train_runtime": 1791.0494,
+    "train_samples_per_second": 2.345,
+    "train_steps_per_second": 0.147,
+    "total_flos": 2.8568954504749056e+16,
+    "train_loss": 0.644860971563216,
+    "epoch": 1.0
+  }
+}

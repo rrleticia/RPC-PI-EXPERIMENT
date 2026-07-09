@@ -1,0 +1,9 @@
+{
+  "scenario_id": "c1_struq_format_only",
+  "seed": 42,
+  "split": "test_attacked_seen",
+  "status": "skipped_existing",
+  "output_path": "/workspace/pi-defense-exp/results/inference/full/c1_struq_format_only/seed_42/test_attacked_seen.jsonl",
+  "rows": 9380,
+  "run_mode": "full"
+}

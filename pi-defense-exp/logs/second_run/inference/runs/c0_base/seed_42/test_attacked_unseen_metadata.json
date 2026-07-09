@@ -1,0 +1,9 @@
+{
+  "scenario_id": "c0_base",
+  "seed": 42,
+  "split": "test_attacked_unseen",
+  "status": "skipped_existing",
+  "output_path": "/workspace/pi-defense-exp/results/inference/full/c0_base/seed_42/test_attacked_unseen.jsonl",
+  "rows": 5628,
+  "run_mode": "full"
+}

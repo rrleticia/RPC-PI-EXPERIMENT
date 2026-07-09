@@ -1,0 +1,77 @@
+{
+  "scenario_id": "c2_struq_sft",
+  "scenario_label": "C2 — StruQ-like SFT",
+  "seed": 1009,
+  "status": "completed",
+  "run_mode": "full",
+  "started_at_utc": "2026-07-08T21:42:36.550862+00:00",
+  "finished_at_utc": "2026-07-08T22:08:54.176373+00:00",
+  "elapsed_seconds": 1577.6254947185516,
+  "adapter_path": "/workspace/pi-defense-exp/adapters/struq/seed_1009",
+  "prompt_strategy": "struq",
+  "splits": [
+    {
+      "scenario_id": "c2_struq_sft",
+      "scenario_label": "C2 — StruQ-like SFT",
+      "seed": 1009,
+      "split": "test_clean",
+      "status": "completed",
+      "run_mode": "full",
+      "started_at_utc": "2026-07-08T21:42:43.627812+00:00",
+      "finished_at_utc": "2026-07-08T21:45:39.272088+00:00",
+      "elapsed_seconds": 175.64425420761108,
+      "rows": 1876,
+      "output_path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_1009/test_clean.jsonl",
+      "adapter_path": "/workspace/pi-defense-exp/adapters/struq/seed_1009",
+      "prompt_strategy": "struq",
+      "generation_config": {
+        "max_new_tokens": 8,
+        "do_sample": false,
+        "num_beams": 1
+      },
+      "normalized_null_count": 0
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "scenario_label": "C2 — StruQ-like SFT",
+      "seed": 1009,
+      "split": "test_attacked_seen",
+      "status": "completed",
+      "run_mode": "full",
+      "started_at_utc": "2026-07-08T21:45:39.313273+00:00",
+      "finished_at_utc": "2026-07-08T21:59:56.800411+00:00",
+      "elapsed_seconds": 857.4871225357056,
+      "rows": 9380,
+      "output_path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_1009/test_attacked_seen.jsonl",
+      "adapter_path": "/workspace/pi-defense-exp/adapters/struq/seed_1009",
+      "prompt_strategy": "struq",
+      "generation_config": {
+        "max_new_tokens": 8,
+        "do_sample": false,
+        "num_beams": 1
+      },
+      "normalized_null_count": 0
+    },
+    {
+      "scenario_id": "c2_struq_sft",
+      "scenario_label": "C2 — StruQ-like SFT",
+      "seed": 1009,
+      "split": "test_attacked_unseen",
+      "status": "completed",
+      "run_mode": "full",
+      "started_at_utc": "2026-07-08T21:59:56.830155+00:00",
+      "finished_at_utc": "2026-07-08T22:08:54.170742+00:00",
+      "elapsed_seconds": 537.3405694961548,
+      "rows": 5628,
+      "output_path": "/workspace/pi-defense-exp/results/inference/full/c2_struq_sft/seed_1009/test_attacked_unseen.jsonl",
+      "adapter_path": "/workspace/pi-defense-exp/adapters/struq/seed_1009",
+      "prompt_strategy": "struq",
+      "generation_config": {
+        "max_new_tokens": 8,
+        "do_sample": false,
+        "num_beams": 1
+      },
+      "normalized_null_count": 0
+    }
+  ]
+}

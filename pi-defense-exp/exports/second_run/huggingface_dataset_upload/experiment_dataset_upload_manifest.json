@@ -1,0 +1,748 @@
+{
+  "notebook": "12_upload_dataset_to_huggingface",
+  "created_at_utc": "2026-07-09T18:20:08.460597+00:00",
+  "project_root": "/workspace/pi-defense-exp",
+  "dataset_repo_id": "leinha/pi-defense-experiment-dataset",
+  "repo_type": "dataset",
+  "dry_run": false,
+  "private_repo": true,
+  "prepared_normalized_hf_dataset": true,
+  "prepared_dataset_dir": "/workspace/pi-defense-exp/exports/huggingface_dataset_prepared",
+  "local_metadata_dir": "/workspace/pi-defense-exp/exports/huggingface_dataset_upload",
+  "included_source_folders": [
+    {
+      "source_path": "/workspace/pi-defense-exp/exports/huggingface_dataset_prepared/data/canonical",
+      "original_source_path": "/workspace/pi-defense-exp/data/canonical",
+      "target_path": "data/canonical",
+      "prepared_for_hf_viewer": true,
+      "description": "Canonical clean and attacked JSONL files."
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/exports/huggingface_dataset_prepared/data/views",
+      "original_source_path": "/workspace/pi-defense-exp/data/views",
+      "target_path": "data/views",
+      "prepared_for_hf_viewer": true,
+      "description": "Training and evaluation views used by the scenarios."
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/configs",
+      "original_source_path": "/workspace/pi-defense-exp/configs",
+      "target_path": "configs",
+      "prepared_for_hf_viewer": false,
+      "description": "Experiment and training configuration files."
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/manifests/data",
+      "original_source_path": "/workspace/pi-defense-exp/manifests/data",
+      "target_path": "manifests/data",
+      "prepared_for_hf_viewer": false,
+      "description": "Dataset creation manifests."
+    },
+    {
+      "source_path": "/workspace/pi-defense-exp/manifests/environment",
+      "original_source_path": "/workspace/pi-defense-exp/manifests/environment",
+      "target_path": "manifests/environment",
+      "prepared_for_hf_viewer": false,
+      "description": "Environment setup manifests."
+    }
+  ],
+  "included_metadata_files": [
+    "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/README.md",
+    "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/file_index.csv",
+    "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/file_index.json",
+    "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/missing_optional_sources.json",
+    "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/schema_normalization_report.json",
+    "/workspace/pi-defense-exp/exports/huggingface_dataset_upload/schema_normalization_report.csv"
+  ],
+  "file_count": 22,
+  "estimated_total_size_mb": 38.909297943115234,
+  "expected_line_counts": {
+    "data/canonical/train_clean.jsonl": 2100,
+    "data/canonical/validation_clean.jsonl": 350,
+    "data/canonical/test_clean.jsonl": 1876,
+    "data/canonical/train_attacked_seen.jsonl": 2100,
+    "data/canonical/validation_attacked_seen.jsonl": 350,
+    "data/canonical/test_attacked_seen.jsonl": 9380,
+    "data/canonical/test_attacked_unseen.jsonl": 5628,
+    "data/views/struq/train_sft.jsonl": 4200,
+    "data/views/struq/validation_sft.jsonl": 700,
+    "data/views/secalign/train_dpo.jsonl": 2100,
+    "data/views/secalign/validation_dpo.jsonl": 350,
+    "data/views/ih/train_sft.jsonl": 4200,
+    "data/views/ih/validation_sft.jsonl": 700,
+    "data/views/evaluation/test_clean.jsonl": 1876,
+    "data/views/evaluation/test_attacked_seen.jsonl": 9380,
+    "data/views/evaluation/test_attacked_unseen.jsonl": 5628
+  },
+  "validation": [
+    {
+      "target_path": "data/canonical/train_clean.jsonl",
+      "expected": 2100,
+      "observed": 2100,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/canonical/validation_clean.jsonl",
+      "expected": 350,
+      "observed": 350,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/canonical/test_clean.jsonl",
+      "expected": 1876,
+      "observed": 1876,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/canonical/train_attacked_seen.jsonl",
+      "expected": 2100,
+      "observed": 2100,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/canonical/validation_attacked_seen.jsonl",
+      "expected": 350,
+      "observed": 350,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/canonical/test_attacked_seen.jsonl",
+      "expected": 9380,
+      "observed": 9380,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/canonical/test_attacked_unseen.jsonl",
+      "expected": 5628,
+      "observed": 5628,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/views/struq/train_sft.jsonl",
+      "expected": 4200,
+      "observed": 4200,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/views/struq/validation_sft.jsonl",
+      "expected": 700,
+      "observed": 700,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/views/secalign/train_dpo.jsonl",
+      "expected": 2100,
+      "observed": 2100,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/views/secalign/validation_dpo.jsonl",
+      "expected": 350,
+      "observed": 350,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/views/ih/train_sft.jsonl",
+      "expected": 4200,
+      "observed": 4200,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/views/ih/validation_sft.jsonl",
+      "expected": 700,
+      "observed": 700,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/views/evaluation/test_clean.jsonl",
+      "expected": 1876,
+      "observed": 1876,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/views/evaluation/test_attacked_seen.jsonl",
+      "expected": 9380,
+      "observed": 9380,
+      "status": "ok"
+    },
+    {
+      "target_path": "data/views/evaluation/test_attacked_unseen.jsonl",
+      "expected": 5628,
+      "observed": 5628,
+      "status": "ok"
+    }
+  ],
+  "schema_normalization": [
+    {
+      "target_path": "data/canonical/test_attacked_seen.jsonl",
+      "row_count": 9380,
+      "schema_group": "public_example",
+      "original_columns": [
+        "id",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "id",
+        "source_split",
+        "source_index",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "added_columns": [
+        "source_split",
+        "source_index"
+      ],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/canonical/test_attacked_unseen.jsonl",
+      "row_count": 5628,
+      "schema_group": "public_example",
+      "original_columns": [
+        "id",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "id",
+        "source_split",
+        "source_index",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "added_columns": [
+        "source_split",
+        "source_index"
+      ],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/canonical/test_clean.jsonl",
+      "row_count": 1876,
+      "schema_group": "public_example",
+      "original_columns": [
+        "id",
+        "source_split",
+        "source_index",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "expected_answer",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "id",
+        "source_split",
+        "source_index",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "added_columns": [
+        "base_id",
+        "untrusted_data",
+        "attack_target",
+        "attack_type",
+        "seen_in_training"
+      ],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/canonical/train_attacked_seen.jsonl",
+      "row_count": 2100,
+      "schema_group": "public_example",
+      "original_columns": [
+        "id",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "id",
+        "source_split",
+        "source_index",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "added_columns": [
+        "source_split",
+        "source_index"
+      ],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/canonical/train_clean.jsonl",
+      "row_count": 2100,
+      "schema_group": "public_example",
+      "original_columns": [
+        "id",
+        "source_split",
+        "source_index",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "expected_answer",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "id",
+        "source_split",
+        "source_index",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "added_columns": [
+        "base_id",
+        "untrusted_data",
+        "attack_target",
+        "attack_type",
+        "seen_in_training"
+      ],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/canonical/validation_attacked_seen.jsonl",
+      "row_count": 350,
+      "schema_group": "public_example",
+      "original_columns": [
+        "id",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "id",
+        "source_split",
+        "source_index",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "added_columns": [
+        "source_split",
+        "source_index"
+      ],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/canonical/validation_clean.jsonl",
+      "row_count": 350,
+      "schema_group": "public_example",
+      "original_columns": [
+        "id",
+        "source_split",
+        "source_index",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "expected_answer",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "id",
+        "source_split",
+        "source_index",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "added_columns": [
+        "base_id",
+        "untrusted_data",
+        "attack_target",
+        "attack_type",
+        "seen_in_training"
+      ],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/views/evaluation/test_attacked_seen.jsonl",
+      "row_count": 9380,
+      "schema_group": "public_example",
+      "original_columns": [
+        "id",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "id",
+        "source_split",
+        "source_index",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "added_columns": [
+        "source_split",
+        "source_index"
+      ],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/views/evaluation/test_attacked_unseen.jsonl",
+      "row_count": 5628,
+      "schema_group": "public_example",
+      "original_columns": [
+        "id",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "id",
+        "source_split",
+        "source_index",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "added_columns": [
+        "source_split",
+        "source_index"
+      ],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/views/evaluation/test_clean.jsonl",
+      "row_count": 1876,
+      "schema_group": "public_example",
+      "original_columns": [
+        "id",
+        "source_split",
+        "source_index",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "expected_answer",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "id",
+        "source_split",
+        "source_index",
+        "base_id",
+        "task_name",
+        "task_family",
+        "split",
+        "trusted_instruction",
+        "clean_input",
+        "untrusted_data",
+        "expected_answer",
+        "attack_target",
+        "attack_type",
+        "seen_in_training",
+        "label_space"
+      ],
+      "added_columns": [
+        "base_id",
+        "untrusted_data",
+        "attack_target",
+        "attack_type",
+        "seen_in_training"
+      ],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/views/struq/train_sft.jsonl",
+      "row_count": 4200,
+      "schema_group": "struq",
+      "original_columns": [
+        "prompt",
+        "completion",
+        "task_name",
+        "attack_type",
+        "source_id",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "prompt",
+        "completion",
+        "task_name",
+        "attack_type",
+        "source_id",
+        "label_space"
+      ],
+      "added_columns": [],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/views/struq/validation_sft.jsonl",
+      "row_count": 700,
+      "schema_group": "struq",
+      "original_columns": [
+        "prompt",
+        "completion",
+        "task_name",
+        "attack_type",
+        "source_id",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "prompt",
+        "completion",
+        "task_name",
+        "attack_type",
+        "source_id",
+        "label_space"
+      ],
+      "added_columns": [],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/views/secalign/train_dpo.jsonl",
+      "row_count": 2100,
+      "schema_group": "secalign",
+      "original_columns": [
+        "prompt",
+        "chosen",
+        "rejected",
+        "task_name",
+        "attack_type",
+        "source_id",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "prompt",
+        "chosen",
+        "rejected",
+        "task_name",
+        "attack_type",
+        "source_id",
+        "label_space"
+      ],
+      "added_columns": [],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/views/secalign/validation_dpo.jsonl",
+      "row_count": 350,
+      "schema_group": "secalign",
+      "original_columns": [
+        "prompt",
+        "chosen",
+        "rejected",
+        "task_name",
+        "attack_type",
+        "source_id",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "prompt",
+        "chosen",
+        "rejected",
+        "task_name",
+        "attack_type",
+        "source_id",
+        "label_space"
+      ],
+      "added_columns": [],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/views/ih/train_sft.jsonl",
+      "row_count": 4200,
+      "schema_group": "ih",
+      "original_columns": [
+        "messages",
+        "completion",
+        "task_name",
+        "attack_type",
+        "source_id",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "messages",
+        "completion",
+        "task_name",
+        "attack_type",
+        "source_id",
+        "label_space"
+      ],
+      "added_columns": [],
+      "removed_columns": []
+    },
+    {
+      "target_path": "data/views/ih/validation_sft.jsonl",
+      "row_count": 700,
+      "schema_group": "ih",
+      "original_columns": [
+        "messages",
+        "completion",
+        "task_name",
+        "attack_type",
+        "source_id",
+        "label_space"
+      ],
+      "normalized_columns": [
+        "messages",
+        "completion",
+        "task_name",
+        "attack_type",
+        "source_id",
+        "label_space"
+      ],
+      "added_columns": [],
+      "removed_columns": []
+    }
+  ],
+  "missing_sources": [],
+  "excluded_by_policy": [
+    "data/cache/",
+    ".venv/",
+    "adapters/",
+    "logs/",
+    "results/",
+    "model weights and Hugging Face caches"
+  ]
+}

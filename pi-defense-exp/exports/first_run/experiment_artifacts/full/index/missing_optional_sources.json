@@ -1,0 +1,27 @@
+[
+  {
+    "group": "model_adapters_outputs",
+    "path": "/workspace/pi-defense-exp/outputs/adapters",
+    "reason": "source_missing"
+  },
+  {
+    "group": "root_files",
+    "path": "/workspace/pi-defense-exp/README.md",
+    "reason": "source_missing"
+  },
+  {
+    "group": "root_files",
+    "path": "/workspace/pi-defense-exp/requirements.txt",
+    "reason": "source_missing"
+  },
+  {
+    "group": "root_files",
+    "path": "/workspace/pi-defense-exp/pyproject.toml",
+    "reason": "source_missing"
+  },
+  {
+    "group": "root_files",
+    "path": "/workspace/pi-defense-exp/.env.example",
+    "reason": "source_missing"
+  }
+]
